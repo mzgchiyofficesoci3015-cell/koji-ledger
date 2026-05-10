@@ -296,3 +296,59 @@ async def create_manual_record(request: Request, user_id: str = Depends(verify_t
     data["queue"].append(record)
     save(data)
     return {"record": record}
+
+
+# =========================================================
+# 一時保管用：画像のみAI読み取りしてキューには入れない
+# =========================================================
+@app.post("/api/records/temp")
+async def read_temp_record(request: Request, user_id: str = Depends(verify_token)):
+    body      = await request.json()
+    project_id = body.get("project_id")
+    image_b64  = body.get("image_b64")
+    if not all([project_id, image_b64]):
+        raise HTTPException(400, "project_id・image_b64 は必須です")
+    data = load()
+    project = next((p for p in data["projects"] if p["id"] == project_id), None)
+    if not project:
+        raise HTTPException(404, "工事が見つかりません")
+    try:
+        result = await ai_read(base64.b64decode(image_b64), "不明")
+    except ValueError:
+        raise HTTPException(422, "画像を読み取れませんでした。明るく・文字がはっきり写った写真で再度お試しください。")
+    except Exception:
+        raise HTTPException(500, "AI読み取り中にエラーが発生しました。")
+    return {"ai_result": result}
+
+# =========================================================
+# 一時保管からエクスポート（費目を指定してキューへ）
+# =========================================================
+@app.post("/api/records/export")
+async def export_records(request: Request, user_id: str = Depends(verify_token)):
+    body       = await request.json()
+    project_id = body.get("project_id")
+    category   = body.get("category")
+    records    = body.get("records", [])
+    if not all([project_id, category]) or not records:
+        raise HTTPException(400, "project_id・category・records は必須です")
+    if category not in CATEGORIES:
+        raise HTTPException(400, f"費目は {CATEGORIES} のいずれかを指定してください")
+    data    = load()
+    project = next((p for p in data["projects"] if p["id"] == project_id), None)
+    if not project:
+        raise HTTPException(404, "工事が見つかりません")
+    for i, ai_result in enumerate(records):
+        ai_result["費目"] = category
+        record = {
+            "id":           f"R{int(datetime.now().timestamp())}{i}",
+            "project_id":   project_id,
+            "project_name": project["name"],
+            "project_num":  project["num"],
+            "category":     category,
+            "ai_result":    ai_result,
+            "queued_at":    datetime.now().isoformat(),
+            "done":         False,
+        }
+        data["queue"].append(record)
+    save(data)
+    return {"ok": True, "queued": len(records)}
