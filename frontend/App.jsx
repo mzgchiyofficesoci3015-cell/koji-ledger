@@ -198,15 +198,33 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
     setLoading(true);setError("");setAiResult(null);
     try{
       const b64=await fileToBase64(file);
-      // 新規工事の場合はproject_idなしで工事情報を送信、サーバー側で自動登録
       const payload=selId
         ?{project_id:selId,image_b64:b64}
         :{project_name:newName,project_num:newNum,project_start:newStart,project_person:newPerson,image_b64:b64};
-      const d=await apiFetch("/api/records/temp",{method:"POST",body:JSON.stringify(payload)},token);
-      // サーバーから返ってきたproject_idをセット（新規登録された場合も含む）
+
+      // エラー詳細を取得するためapiFetchを直接使わず自前でfetch
+      const headers={"Content-Type":"application/json",Authorization:`Bearer ${token}`};
+      const res=await fetch(`${API}/api/records/temp`,{method:"POST",headers,body:JSON.stringify(payload)});
+
+      if(!res.ok){
+        const errData=await res.json().catch(()=>({}));
+        // エラー詳細を表示
+        const detail=errData.detail;
+        if(typeof detail==="object"){
+          setError(`❌ ${detail.message}
+
+【エラー種別】${detail.error_type}
+【詳細】${detail.detail}`);
+        }else{
+          setError(`❌ ${detail||"エラーが発生しました"}`);
+        }
+        setLoading(false);return;
+      }
+
+      const d=await res.json();
       if(!selId&&d.project_id){setSelId(d.project_id);await onRefresh();}
       setAiResult({...d.ai_result,_projId:d.project_id||selId});
-    }catch(e){setError(e.message);}
+    }catch(e){setError(`❌ 通信エラー：${e.message}`);}
     setLoading(false);
   };
 

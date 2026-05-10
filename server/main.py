@@ -313,8 +313,10 @@ async def ai_read(image_bytes: bytes, category: str) -> dict:
             if result2.get("読み取り信頼度") == "高":
                 result["読み取り信頼度"] = "高"
             result["備考"] = f"2段階読み取り実施。{result.get('備考') or ''}"
-        except Exception:
-            pass  # 2回目の解析失敗時は1回目の結果をそのまま使用
+        except Exception as e2:
+            # 2回目の解析失敗時は1回目の結果をそのまま使用
+            import logging
+            logging.warning(f"2段階目の読み取り解析失敗: {e2}")
 
     # 不明瞭箇所リストは返却不要
     result.pop("不明瞭箇所", None)
@@ -433,10 +435,30 @@ async def read_temp_record(request: Request, user_id: str = Depends(verify_token
 
     try:
         result = await ai_read(base64.b64decode(image_b64), "不明")
-    except ValueError:
-        raise HTTPException(422, "画像を読み取れませんでした。明るく・文字がはっきり写った写真で再度お試しください。")
-    except Exception:
-        raise HTTPException(500, "AI読み取り中にエラーが発生しました。")
+    except ValueError as e:
+        raise HTTPException(422, detail={
+            "message": "画像を読み取れませんでした。明るく・文字がはっきり写った写真で再度お試しください。",
+            "error_type": "unreadable",
+            "detail": str(e),
+        })
+    except json.JSONDecodeError as e:
+        raise HTTPException(422, detail={
+            "message": "AIの応答を解析できませんでした。再度お試しください。",
+            "error_type": "json_parse_error",
+            "detail": str(e),
+        })
+    except anthropic.APIError as e:
+        raise HTTPException(502, detail={
+            "message": f"Claude APIエラーが発生しました。しばらく待ってから再試行してください。",
+            "error_type": "api_error",
+            "detail": str(e),
+        })
+    except Exception as e:
+        raise HTTPException(500, detail={
+            "message": "AI読み取り中に予期しないエラーが発生しました。",
+            "error_type": "unknown_error",
+            "detail": str(e),
+        })
     return {"ai_result": result, "project_id": project_id, "project": project}
 
 # =========================================================
