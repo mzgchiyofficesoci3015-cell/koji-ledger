@@ -196,25 +196,62 @@ async def create_record(request: Request, user_id: str = Depends(verify_token)):
     return {"record": record, "ai_result": result}
 
 # =========================================================
-# Claude API 画像読み取り
+# Claude API 画像読み取り（精度改善版）
 # =========================================================
 async def ai_read(image_bytes: bytes, category: str) -> dict:
     client = anthropic.Anthropic(api_key=CLAUDE_KEY)
     b64    = base64.standard_b64encode(image_bytes).decode()
-    prompt = f"""この画像（{category}の書類）から情報を読み取り、以下のJSON形式のみで返してください。
+
+    cat_hint = {
+        "材料費": "建築・土木工事の材料購入レシート・納品書（セメント・木材・鉄筋・砂利・塗料など）",
+        "人件費": "作業員・職人への賃金支払い領収書・作業日報（氏名・作業内容・日数・単価など）",
+        "外注費": "下請け業者・専門業者への支払い領収書（業者名・作業内容・金額）",
+        "経費":   "工事に関わる交通費・駐車場代・消耗品・工具代などの領収書・レシート",
+    }.get(category, "建築土木工事に関連する領収書・レシート・納品書")
+
+    system = """あなたは建築土木業の経理担当で、日本の手書き領収書・レシート・納品書の読み取りの専門家です。
+以下のルールを厳守してください：
+- JSONのみを返す。前置き・説明・コードブロック記号（```）は一切不要
+- 手書き文字は文脈から最も合理的な解釈をする
+- 金額はカンマ・円記号を除いた数値で返す
+- 日付は必ずYYYY-MM-DD形式に変換する（令和・平成表記も西暦に変換）
+- 読み取れない項目はnullとし、推測で埋めない
+- 明細が複数行ある場合は全て抽出する
+- 合計金額は「合計」「小計」「税込」欄を優先して読む"""
+
+    prompt = f"""【書類の種類】{cat_hint}
+
+この画像から情報を読み取り、以下のJSON形式のみで返してください。
+
 {{
   "日付": "YYYY-MM-DD または null",
   "費目": "{category}",
-  "明細": [{{"品名_作業内容": "文字列", "数量": 数値またはnull, "単位": "文字列またはnull", "単価": 数値またはnull, "金額": 数値}}],
+  "明細": [
+    {{
+      "品名_作業内容": "文字列（読み取れない場合はnull）",
+      "数量": 数値またはnull,
+      "単位": "個・本・袋・m・m²・m³・式・人・日 など または null",
+      "単価": 数値またはnull,
+      "金額": 数値またはnull
+    }}
+  ],
   "合計金額": 数値またはnull,
-  "仕入先_外注先": "文字列またはnull",
-  "読み取り信頼度": "高 または 中 または 低",
-  "備考": "文字列またはnull"
-}}"""
+  "消費税": 数値またはnull,
+  "仕入先_外注先": "店名・会社名・個人名 または null",
+  "読み取り信頼度": "高（ほぼ確実） または 中（一部不明瞭） または 低（大部分不明瞭）",
+  "備考": "読み取りにくかった箇所・特記事項 または null"
+}}
+
+【注意事項】
+- 手書きの場合、似た文字（1とI、0とO、6と6など）は文脈から判断してください
+- 金額欄に税込・税抜の両方がある場合は税込金額を合計金額としてください
+- 日付が和暦の場合は必ず西暦に変換してください（令和6年=2024年、令和7年=2025年）
+- 仕入先は書類の発行元（店名・会社名）を読み取ってください"""
+
     msg = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=1000,
-        system="建築土木業の工事台帳担当。手書き領収書・レシートの画像をJSON形式のみで返す。余分な説明不要。",
+        max_tokens=1500,
+        system=system,
         messages=[{
             "role": "user",
             "content": [
@@ -300,25 +337,50 @@ async def create_manual_record(request: Request, user_id: str = Depends(verify_t
 
 # =========================================================
 # 一時保管用：画像のみAI読み取りしてキューには入れない
+# 新規工事の場合は project_id なしで project_name 等を渡すと自動登録
 # =========================================================
 @app.post("/api/records/temp")
 async def read_temp_record(request: Request, user_id: str = Depends(verify_token)):
-    body      = await request.json()
-    project_id = body.get("project_id")
-    image_b64  = body.get("image_b64")
-    if not all([project_id, image_b64]):
-        raise HTTPException(400, "project_id・image_b64 は必須です")
+    body        = await request.json()
+    project_id  = body.get("project_id")
+    image_b64   = body.get("image_b64")
+    project_name= body.get("project_name")
+    project_num = body.get("project_num", "")
+    project_start=body.get("project_start", datetime.now().strftime("%Y-%m-%d"))
+    project_person=body.get("project_person", "")
+
+    if not image_b64:
+        raise HTTPException(400, "image_b64 は必須です")
+
     data = load()
-    project = next((p for p in data["projects"] if p["id"] == project_id), None)
-    if not project:
-        raise HTTPException(404, "工事が見つかりません")
+
+    # project_idがない場合は新規登録
+    if not project_id:
+        if not project_name:
+            raise HTTPException(400, "project_id または project_name が必要です")
+        # 同名の工事が既にあれば再利用
+        existing = next((p for p in data["projects"] if p["name"] == project_name and not p.get("done")), None)
+        if existing:
+            project_id = existing["id"]
+            project = existing
+        else:
+            project_id = f"P{int(datetime.now().timestamp())}"
+            num = project_num or f"{datetime.now().year}-{len(data['projects'])+1:03d}"
+            project = {"id": project_id, "name": project_name, "num": num, "start": project_start, "person": project_person, "done": False}
+            data["projects"].append(project)
+            save(data)
+    else:
+        project = next((p for p in data["projects"] if p["id"] == project_id), None)
+        if not project:
+            raise HTTPException(404, "工事が見つかりません")
+
     try:
         result = await ai_read(base64.b64decode(image_b64), "不明")
     except ValueError:
         raise HTTPException(422, "画像を読み取れませんでした。明るく・文字がはっきり写った写真で再度お試しください。")
     except Exception:
         raise HTTPException(500, "AI読み取り中にエラーが発生しました。")
-    return {"ai_result": result}
+    return {"ai_result": result, "project_id": project_id, "project": project}
 
 # =========================================================
 # 一時保管からエクスポート（費目を指定してキューへ）

@@ -197,10 +197,15 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
     if(!file){setError(t.uploadFirst);return;}
     setLoading(true);setError("");setAiResult(null);
     try{
-      const projId=await ensureProject();
       const b64=await fileToBase64(file);
-      const d=await apiFetch("/api/records/temp",{method:"POST",body:JSON.stringify({project_id:projId,image_b64:b64})},token);
-      setAiResult({...d.ai_result,_projId:projId});
+      // 新規工事の場合はproject_idなしで工事情報を送信、サーバー側で自動登録
+      const payload=selId
+        ?{project_id:selId,image_b64:b64}
+        :{project_name:newName,project_num:newNum,project_start:newStart,project_person:newPerson,image_b64:b64};
+      const d=await apiFetch("/api/records/temp",{method:"POST",body:JSON.stringify(payload)},token);
+      // サーバーから返ってきたproject_idをセット（新規登録された場合も含む）
+      if(!selId&&d.project_id){setSelId(d.project_id);await onRefresh();}
+      setAiResult({...d.ai_result,_projId:d.project_id||selId});
     }catch(e){setError(e.message);}
     setLoading(false);
   };
@@ -273,6 +278,16 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
               {preview?<img src={preview} style={css.previewImg} alt="preview"/>:<><div style={{fontSize:44,marginBottom:10}}>📷</div><p style={{fontSize:14,color:"#666",margin:0}}>{t.tapToUpload}</p><p style={{fontSize:12,color:"#aaa",margin:"4px 0 0"}}>{t.supportedFormats}</p></>}
             </div>
             <input id="koji-file" type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={onFile}/>
+            {!file&&(
+              <div style={{marginTop:12,background:"#FFF8E1",borderRadius:10,padding:"10px 14px",fontSize:12,color:"#E65100"}}>
+                <div style={{fontWeight:700,marginBottom:6}}>📸 きれいに撮るコツ</div>
+                <div>・明るい場所で撮影する</div>
+                <div>・書類を真上から撮る（斜めにしない）</div>
+                <div>・影が書類にかからないようにする</div>
+                <div>・文字全体が枠内に収まるようにする</div>
+                <div>・手ブレに注意してゆっくり撮る</div>
+              </div>
+            )}
             {file&&!aiResult&&<button style={{...css.btnPrimary,marginTop:12}} onClick={readImage} disabled={loading}>{loading?<><span style={css.spinner}/>{t.reading}</>:`🤖 ${t.readBtn}`}</button>}
             {error&&<div style={css.errorBox}>{error}</div>}
             {aiResult&&(<>
