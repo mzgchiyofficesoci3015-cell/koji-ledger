@@ -196,41 +196,52 @@ async def create_record(request: Request, user_id: str = Depends(verify_token)):
     return {"record": record, "ai_result": result}
 
 # =========================================================
-# Claude API 画像読み取り（精度改善版）
+# Claude API 画像読み取り（高精度版：Opus + 2段階読み取り）
 # =========================================================
 async def ai_read(image_bytes: bytes, category: str) -> dict:
     client = anthropic.Anthropic(api_key=CLAUDE_KEY)
     b64    = base64.standard_b64encode(image_bytes).decode()
 
     cat_hint = {
-        "材料費": "建築・土木工事の材料購入レシート・納品書（セメント・木材・鉄筋・砂利・塗料など）",
-        "人件費": "作業員・職人への賃金支払い領収書・作業日報（氏名・作業内容・日数・単価など）",
-        "外注費": "下請け業者・専門業者への支払い領収書（業者名・作業内容・金額）",
-        "経費":   "工事に関わる交通費・駐車場代・消耗品・工具代などの領収書・レシート",
+        "材料費": "建築・土木工事の材料購入レシート・納品書（セメント・木材・鉄筋・砂利・塗料・ボルト・釘など）",
+        "人件費": "作業員・職人への賃金支払い領収書・作業日報（氏名・作業内容・日数・時間・単価など）",
+        "外注費": "下請け業者・専門業者への支払い領収書（業者名・作業内容・工事名・金額）",
+        "経費":   "工事に関わる交通費・高速代・駐車場代・消耗品・工具代・ガソリン代などの領収書・レシート",
+        "不明":   "建築土木工事に関連する領収書・レシート・納品書・請求書",
     }.get(category, "建築土木工事に関連する領収書・レシート・納品書")
 
-    system = """あなたは建築土木業の経理担当で、日本の手書き領収書・レシート・納品書の読み取りの専門家です。
-以下のルールを厳守してください：
-- JSONのみを返す。前置き・説明・コードブロック記号（```）は一切不要
-- 手書き文字は文脈から最も合理的な解釈をする
-- 金額はカンマ・円記号を除いた数値で返す
-- 日付は必ずYYYY-MM-DD形式に変換する（令和・平成表記も西暦に変換）
-- 読み取れない項目はnullとし、推測で埋めない
-- 明細が複数行ある場合は全て抽出する
-- 合計金額は「合計」「小計」「税込」欄を優先して読む"""
+    system = """あなたは建築土木業の経理担当として20年以上の経験を持つ専門家です。
+日本の手書き領収書・印刷レシート・納品書・請求書の読み取りに特化しています。
 
-    prompt = f"""【書類の種類】{cat_hint}
+【絶対ルール】
+- JSONのみを返す。前置き・説明・```などのコードブロック記号は一切不要
+- 読み取れない項目はnullとし、絶対に推測で埋めない
+- 金額はカンマ・円記号・¥を除いた整数で返す
+- 日付は必ずYYYY-MM-DD形式（和暦→西暦変換必須）
 
-この画像から情報を読み取り、以下のJSON形式のみで返してください。
+【和暦変換表】
+令和7年=2025年、令和6年=2024年、令和5年=2023年、令和4年=2022年
+令和3年=2021年、令和2年=2020年、令和元年=2019年
+
+【読み取りのコツ】
+- 手書き数字：1と7、6と0、3と8は文脈・桁数から判断
+- 金額は「合計」「小計」「税込」「御請求金額」欄を最優先
+- 複数の金額欄がある場合は最も大きい「税込合計」を合計金額とする
+- 明細が複数行ある場合は全行を抽出する
+- 仕入先は書類の発行元（右上・左上のスタンプ・印刷部分）から読む"""
+
+    prompt_1st = f"""【書類の種類】{cat_hint}
+
+この画像を注意深く観察し、以下のJSON形式のみで返してください。
 
 {{
   "日付": "YYYY-MM-DD または null",
   "費目": "{category}",
   "明細": [
     {{
-      "品名_作業内容": "文字列（読み取れない場合はnull）",
+      "品名_作業内容": "文字列 または null",
       "数量": 数値またはnull,
-      "単位": "個・本・袋・m・m²・m³・式・人・日 など または null",
+      "単位": "個・本・袋・m・m²・m³・式・人・日・時間 など または null",
       "単価": 数値またはnull,
       "金額": 数値またはnull
     }}
@@ -238,30 +249,76 @@ async def ai_read(image_bytes: bytes, category: str) -> dict:
   "合計金額": 数値またはnull,
   "消費税": 数値またはnull,
   "仕入先_外注先": "店名・会社名・個人名 または null",
-  "読み取り信頼度": "高（ほぼ確実） または 中（一部不明瞭） または 低（大部分不明瞭）",
-  "備考": "読み取りにくかった箇所・特記事項 または null"
-}}
+  "読み取り信頼度": "高 または 中 または 低",
+  "不明瞭箇所": ["読み取りに自信がない項目名をリストで"],
+  "備考": "特記事項 または null"
+}}"""
 
-【注意事項】
-- 手書きの場合、似た文字（1とI、0とO、6と6など）は文脈から判断してください
-- 金額欄に税込・税抜の両方がある場合は税込金額を合計金額としてください
-- 日付が和暦の場合は必ず西暦に変換してください（令和6年=2024年、令和7年=2025年）
-- 仕入先は書類の発行元（店名・会社名）を読み取ってください"""
-
-    msg = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1500,
+    # 1回目の読み取り
+    msg1 = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=2000,
         system=system,
         messages=[{
             "role": "user",
             "content": [
                 {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
-                {"type": "text", "text": prompt},
+                {"type": "text", "text": prompt_1st},
             ],
         }],
     )
-    raw    = re.sub(r"```json|```", "", msg.content[0].text).strip()
-    result = json.loads(raw)
+    raw1   = re.sub(r"```json|```", "", msg1.content[0].text).strip()
+    result = json.loads(raw1)
+
+    # 信頼度が低・中の場合は2回目の読み取りで補完
+    confidence = result.get("読み取り信頼度", "高")
+    unclear    = result.get("不明瞭箇所", [])
+
+    if confidence in ["低", "中"] and unclear:
+        unclear_str = "・".join(unclear)
+        prompt_2nd = f"""この画像をもう一度注意深く見てください。
+特に「{unclear_str}」の部分が不明瞭でした。
+
+前回の読み取り結果：
+{json.dumps(result, ensure_ascii=False, indent=2)}
+
+上記の不明瞭だった箇所に集中して再確認し、より正確な値に修正したJSONのみを返してください。
+確信が持てない場合はnullのままにしてください。"""
+
+        msg2 = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=2000,
+            system=system,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
+                        {"type": "text", "text": prompt_1st},
+                    ],
+                },
+                {"role": "assistant", "content": raw1},
+                {"role": "user",     "content": prompt_2nd},
+            ],
+        )
+        raw2 = re.sub(r"```json|```", "", msg2.content[0].text).strip()
+        try:
+            result2 = json.loads(raw2)
+            # 2回目で改善された項目のみ上書き
+            for key in ["日付", "合計金額", "消費税", "仕入先_外注先"]:
+                if result2.get(key) is not None and result.get(key) is None:
+                    result[key] = result2[key]
+            if result2.get("明細") and len(result2["明細"]) >= len(result.get("明細") or []):
+                result["明細"] = result2["明細"]
+            if result2.get("読み取り信頼度") == "高":
+                result["読み取り信頼度"] = "高"
+            result["備考"] = f"2段階読み取り実施。{result.get('備考') or ''}"
+        except Exception:
+            pass  # 2回目の解析失敗時は1回目の結果をそのまま使用
+
+    # 不明瞭箇所リストは返却不要
+    result.pop("不明瞭箇所", None)
+
     if not result.get("明細") and result.get("合計金額") is None:
         raise ValueError("readable_failed")
     return result
