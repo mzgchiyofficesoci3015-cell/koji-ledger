@@ -256,7 +256,7 @@ async def ai_read(image_bytes: bytes, category: str) -> dict:
 
     # 1回目の読み取り
     msg1 = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-5",
         max_tokens=2000,
         system=system,
         messages=[{
@@ -286,7 +286,7 @@ async def ai_read(image_bytes: bytes, category: str) -> dict:
 確信が持てない場合はnullのままにしてください。"""
 
         msg2 = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5",
             max_tokens=2000,
             system=system,
             messages=[
