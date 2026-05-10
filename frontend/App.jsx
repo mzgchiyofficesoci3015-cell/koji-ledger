@@ -278,7 +278,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
                 <span style={css.badge(confBadge[aiResult.読み取り信頼度]||"gray")}>{t.confidence}：{{高:t.high,中:t.mid,低:t.low}[aiResult.読み取り信頼度]||"—"}</span>
               </div>
               <div style={css.resultBox}>
-                {[[t.date,aiResult.日付||"—"],[t.supplier,aiResult.仕入先_外注先||"—"],...(aiResult.明細||[]).map(d=>[`${d.品名_作業内容}${d.数量?` ${d.数量}${d.単位||""}`:""}`、d.金額?`¥${Number(d.金額).toLocaleString()}`:"—"])].map(([label,val],i)=>(
+                {[[t.date,aiResult.日付||"—"],[t.supplier,aiResult.仕入先_外注先||"—"],...(aiResult.明細||[]).map(d=>[`${d.品名_作業内容}${d.数量?` ${d.数量}${d.単位||""}`:""}`,d.金額?`¥${Number(d.金額).toLocaleString()}`:"—"])].map(([label,val],i)=>(
                   <div key={i} style={css.resultRow}><span style={css.resultLbl}>{label}</span><span>{val}</span></div>
                 ))}
                 <div style={{...css.resultRow,borderBottom:"none",paddingTop:10}}><span style={{fontWeight:700}}>{t.amount}</span><span style={{fontWeight:700,fontSize:17}}>{aiResult.合計金額?`¥${Number(aiResult.合計金額).toLocaleString()}`:"—"}</span></div>
