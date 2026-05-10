@@ -140,6 +140,18 @@ async def complete_project(project_id: str, user_id: str = Depends(verify_token)
             return {"ok": True}
     raise HTTPException(404, "工事が見つかりません")
 
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str, user_id: str = Depends(verify_token)):
+    data = load()
+    before = len(data["projects"])
+    data["projects"] = [p for p in data["projects"] if p["id"] != project_id]
+    if len(data["projects"]) == before:
+        raise HTTPException(404, "工事が見つかりません")
+    # 関連キューも削除
+    data["queue"] = [r for r in data["queue"] if r["project_id"] != project_id]
+    save(data)
+    return {"ok": True}
+
 # =========================================================
 # AI画像読み取り → キューへ追加
 # =========================================================
@@ -250,3 +262,37 @@ async def mark_project_done_from_pc(request: Request):
 @app.get("/")
 async def health():
     return {"status": "ok", "version": "3.0"}
+
+# =========================================================
+# 手打ち入力 → キューへ追加
+# =========================================================
+@app.post("/api/records/manual")
+async def create_manual_record(request: Request, user_id: str = Depends(verify_token)):
+    body          = await request.json()
+    project_id    = body.get("project_id")
+    category      = body.get("category")
+    manual_result = body.get("manual_result")
+
+    if not all([project_id, category, manual_result]):
+        raise HTTPException(400, "project_id・category・manual_result は必須です")
+    if category not in CATEGORIES:
+        raise HTTPException(400, f"費目は {CATEGORIES} のいずれかを指定してください")
+
+    data    = load()
+    project = next((p for p in data["projects"] if p["id"] == project_id), None)
+    if not project:
+        raise HTTPException(404, "工事が見つかりません")
+
+    record = {
+        "id":           f"R{int(datetime.now().timestamp())}",
+        "project_id":   project_id,
+        "project_name": project["name"],
+        "project_num":  project["num"],
+        "category":     category,
+        "ai_result":    manual_result,
+        "queued_at":    datetime.now().isoformat(),
+        "done":         False,
+    }
+    data["queue"].append(record)
+    save(data)
+    return {"record": record}
