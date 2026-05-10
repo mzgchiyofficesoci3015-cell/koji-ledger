@@ -44,6 +44,9 @@ const T = {
     confirmExport:"選択中のフォルダのデータをExcelにエクスポートします。よろしいですか？",
     exportSuccess:"✅ エクスポートしました。PCエージェントが次回起動時にExcelを作成します。",
     itemCount:"件",
+    editRecord:"編集", deleteRecord:"削除",
+    editTitle:"明細を編集", saveEdit:"保存", cancelEdit:"キャンセル",
+    confirmDelete:"このデータを削除しますか？",
   },
 };
 
@@ -205,7 +208,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
   const savePhoto=async()=>{
     setSave("saving");
     const proj=projects.find(p=>p.id===aiResult._projId)||{id:aiResult._projId,name:projName,num:""};
-    onSaveTemp({project_id:proj.id,project_name:proj.name,ai_result:aiResult,input_method:"photo"});
+    onSaveTemp({project_id:proj.id,project_name:proj.name,ai_result:aiResult,input_method:"photo",image_preview:preview});
     setSave("saved");
   };
 
@@ -403,7 +406,7 @@ function TempPage({t,projects,tempData,onUpdate,token}){
             <div style={{fontSize:12,color:C.sub,fontWeight:600,marginBottom:8}}>📥 {t.unsorted}（{unsorted.length}件）</div>
             <div style={{display:viewMode==="grid"?"grid":"flex",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",flexDirection:"column",gap:8}}>
               {unsorted.map(d=>(
-                <TempCard key={d.id} d={d} t={t} viewMode={viewMode} onDragStart={()=>setDragId(d.id)} cats={CATS} catColors={CAT_COLORS} catBg={CAT_BG} onMove={folder=>moveToFolder([d.id],folder)}/>
+                <TempCard key={d.id} d={d} t={t} viewMode={viewMode} onDragStart={()=>setDragId(d.id)} cats={CATS} catColors={CAT_COLORS} catBg={CAT_BG} onMove={folder=>moveToFolder([d.id],folder)} onDelete={()=>onUpdate(tempData.filter(x=>x.id!==d.id))} onEdit={updated=>onUpdate(tempData.map(x=>x.id===d.id?{...x,ai_result:updated}:x))}/>
               ))}
             </div>
             {/* ドロップゾーン */}
@@ -438,7 +441,7 @@ function TempPage({t,projects,tempData,onUpdate,token}){
               </div>
               <div style={{display:viewMode==="grid"?"grid":"flex",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",flexDirection:"column",gap:8}}>
                 {items.map(d=>(
-                  <TempCard key={d.id} d={d} t={t} viewMode={viewMode} onDragStart={()=>setDragId(d.id)} cats={CATS} catColors={CAT_COLORS} catBg={CAT_BG} onMove={folder=>moveToFolder([d.id],folder)} currentFolder={cat}/>
+                  <TempCard key={d.id} d={d} t={t} viewMode={viewMode} onDragStart={()=>setDragId(d.id)} cats={CATS} catColors={CAT_COLORS} catBg={CAT_BG} onMove={folder=>moveToFolder([d.id],folder)} currentFolder={cat} onDelete={()=>onUpdate(tempData.filter(x=>x.id!==d.id))} onEdit={updated=>onUpdate(tempData.map(x=>x.id===d.id?{...x,ai_result:updated}:x))}/>
                 ))}
               </div>
             </div>
@@ -449,11 +452,62 @@ function TempPage({t,projects,tempData,onUpdate,token}){
   );
 }
 
-function TempCard({d,t,viewMode,onDragStart,cats,catColors,catBg,onMove,currentFolder}){
+function TempCard({d,t,viewMode,onDragStart,cats,catColors,catBg,onMove,currentFolder,onDelete,onEdit}){
+  const [editing,setEditing]=useState(false);
   const ai=d.ai_result||{};
   const color=currentFolder?catColors[currentFolder]:C.sub;
   const bg=currentFolder?catBg[currentFolder]:"#F8F8F6";
   const total=ai.合計金額;
+
+  // 編集用ステート
+  const [eDate,setEDate]=useState(ai.日付||"");
+  const [eSupplier,setESupplier]=useState(ai.仕入先_外注先||"");
+  const [eTotal,setETotal]=useState(String(ai.合計金額||""));
+  const [eItems,setEItems]=useState(ai.明細?.length>0?ai.明細.map(i=>({name:i.品名_作業内容||"",qty:String(i.数量||""),unit:i.単位||"",unitPrice:String(i.単価||""),amount:String(i.金額||"")})):[{name:"",qty:"",unit:"",unitPrice:"",amount:""}]);
+  const [eMemo,setEMemo]=useState(ai.備考||"");
+
+  const saveEdit=()=>{
+    const updated={...ai,日付:eDate,仕入先_外注先:eSupplier,合計金額:Number(eTotal),備考:eMemo||null,
+      明細:eItems.filter(i=>i.name||i.amount).map(i=>({品名_作業内容:i.name,数量:i.qty?Number(i.qty):null,単位:i.unit||null,単価:i.unitPrice?Number(i.unitPrice):null,金額:i.amount?Number(i.amount):null}))};
+    onEdit(updated);setEditing(false);
+  };
+  const addEItem=()=>setEItems(items=>[...items,{name:"",qty:"",unit:"",unitPrice:"",amount:""}]);
+  const removeEItem=i=>setEItems(items=>items.filter((_,idx)=>idx!==i));
+  const updateEItem=(i,k,v)=>setEItems(items=>items.map((item,idx)=>idx===i?{...item,[k]:v}:item));
+
+  if(editing){
+    return(
+      <div style={{background:bg,borderRadius:10,padding:"14px",border:`2px solid ${color||C.border}`}}>
+        <div style={{fontSize:13,fontWeight:700,marginBottom:12,color:C.ink}}>{t.editTitle} — {d.project_name}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+          <div><label style={css.label}>{t.date}</label><input style={css.input} type="date" value={eDate} onChange={e=>setEDate(e.target.value)}/></div>
+          <div><label style={css.label}>{t.supplier}</label><input style={css.input} value={eSupplier} onChange={e=>setESupplier(e.target.value)}/></div>
+        </div>
+        {eItems.map((item,i)=>(
+          <div key={i} style={{background:"#fff",borderRadius:8,padding:"10px",marginBottom:8,border:`1px solid ${C.border}`}}>
+            <div style={{marginBottom:6}}><label style={css.label}>{t.itemName}</label><input style={css.input} value={item.name} onChange={e=>updateEItem(i,"name",e.target.value)}/></div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:6}}>
+              <div><label style={css.label}>{t.qty}</label><input style={css.input} value={item.qty} onChange={e=>updateEItem(i,"qty",e.target.value)}/></div>
+              <div><label style={css.label}>{t.unit}</label><input style={css.input} value={item.unit} onChange={e=>updateEItem(i,"unit",e.target.value)}/></div>
+              <div><label style={css.label}>{t.unitPrice}</label><input style={css.input} value={item.unitPrice} onChange={e=>updateEItem(i,"unitPrice",e.target.value)}/></div>
+            </div>
+            <div style={{display:"flex",gap:6,alignItems:"flex-end"}}>
+              <div style={{flex:1}}><label style={css.label}>{t.amount}（円）</label><input style={css.input} value={item.amount} onChange={e=>updateEItem(i,"amount",e.target.value)}/></div>
+              {eItems.length>1&&<button style={{...css.btnSmall,color:C.red,borderColor:C.red,marginBottom:2}} onClick={()=>removeEItem(i)}>{t.removeItem}</button>}
+            </div>
+          </div>
+        ))}
+        <button style={{...css.btnOutline,width:"100%",marginBottom:10,boxSizing:"border-box",fontSize:12}} onClick={addEItem}>{t.addItem}</button>
+        <div style={{marginBottom:10}}><label style={css.label}>{t.amount} 合計（円）</label><input style={css.input} value={eTotal} onChange={e=>setETotal(e.target.value)}/></div>
+        <div style={{marginBottom:10}}><label style={css.label}>備考</label><input style={css.input} value={eMemo} onChange={e=>setEMemo(e.target.value)}/></div>
+        <div style={{display:"flex",gap:8}}>
+          <button style={{...css.btnOutline,flex:1}} onClick={()=>setEditing(false)}>{t.cancelEdit}</button>
+          <button style={{...css.btnPrimary,flex:2,marginTop:0}} onClick={saveEdit}>{t.saveEdit}</button>
+        </div>
+      </div>
+    );
+  }
+
   return(
     <div draggable onDragStart={onDragStart} style={{background:d.exported?"#F0F0F0":bg,borderRadius:10,padding:viewMode==="grid"?"12px":"10px 14px",border:`1.5px solid ${d.exported?"#ddd":color||C.border}`,cursor:"grab",opacity:d.exported?.7:1,display:viewMode==="list"?"flex":"block",alignItems:"center",gap:10,position:"relative"}}>
       {d.exported&&<span style={{position:"absolute",top:6,right:8,fontSize:10,color:"#999",background:"#E0E0E0",padding:"2px 6px",borderRadius:10}}>✓ {t.exportDone}</span>}
@@ -462,8 +516,31 @@ function TempCard({d,t,viewMode,onDragStart,cats,catColors,catBg,onMove,currentF
         <div style={{fontWeight:600,fontSize:13,color:C.ink,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{d.project_name}</div>
         <div style={{fontSize:11,color:C.sub,marginTop:2}}>{ai.日付||"日付不明"}{ai.仕入先_外注先?` ／ ${ai.仕入先_外注先}`:""}</div>
         {viewMode==="list"&&total&&<div style={{fontSize:12,fontWeight:600,color:color||C.ink,marginTop:2}}>¥{Number(total).toLocaleString()}</div>}
+        {/* 明細一覧（展開表示） */}
+        {ai.明細?.length>0&&(
+          <div style={{marginTop:6}}>
+            {ai.明細.map((m,i)=>(
+              <div key={i} style={{fontSize:11,color:C.sub,display:"flex",justifyContent:"space-between"}}>
+                <span>{m.品名_作業内容}{m.数量?` ${m.数量}${m.単位||""}`:""}</span>
+                <span>{m.金額?`¥${Number(m.金額).toLocaleString()}`:""}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+      {viewMode==="grid"&&d.image_preview&&(
+        <div style={{width:"100%",marginTop:8,borderRadius:8,overflow:"hidden",border:`1px solid ${C.border}`}}>
+          <img src={d.image_preview} alt="receipt" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+        </div>
+      )}
       {viewMode==="grid"&&total&&<div style={{fontSize:14,fontWeight:700,color:color||C.ink,marginTop:6}}>¥{Number(total).toLocaleString()}</div>}
+      {/* 操作ボタン */}
+      {!d.exported&&(
+        <div style={{display:"flex",gap:6,flexShrink:0,flexDirection:viewMode==="grid"?"row":"column",marginTop:viewMode==="grid"?"8px":0}}>
+          <button style={{...css.btnSmall,fontSize:11}} onClick={e=>{e.stopPropagation();setEditing(true);}}>✏️ {t.editRecord}</button>
+          <button style={{...css.btnSmall,fontSize:11,color:C.red,borderColor:C.red}} onClick={e=>{e.stopPropagation();if(window.confirm(t.confirmDelete))onDelete();}}>🗑 {t.deleteRecord}</button>
+        </div>
+      )}
       {!d.exported&&!currentFolder&&(
         <select style={{...css.select,width:viewMode==="grid"?"100%":"120px",marginTop:viewMode==="grid"?"8px":0,fontSize:11,padding:"5px 8px"}} value="" onChange={e=>e.target.value&&onMove(e.target.value)}>
           <option value="">→ 移動</option>
