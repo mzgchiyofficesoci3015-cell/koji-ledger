@@ -198,9 +198,10 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
     setLoading(true);setError("");setAiResult(null);
     try{
       const b64=await fileToBase64(file);
+      const mediaType = file.type || "image/jpeg";
       const payload=selId
-        ?{project_id:selId,image_b64:b64}
-        :{project_name:newName,project_num:newNum,project_start:newStart,project_person:newPerson,image_b64:b64};
+        ?{project_id:selId,image_b64:b64,media_type:mediaType}
+        :{project_name:newName,project_num:newNum,project_start:newStart,project_person:newPerson,image_b64:b64,media_type:mediaType};
 
       // エラー詳細を取得するためapiFetchを直接使わず自前でfetch
       const headers={"Content-Type":"application/json",Authorization:`Bearer ${token}`};
@@ -293,17 +294,17 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
           )}
           {inputMethod==="photo"&&(<>
             <div style={css.uploadZone} onClick={()=>document.getElementById("koji-file").click()}>
-              {preview?<img src={preview} style={css.previewImg} alt="preview"/>:<><div style={{fontSize:44,marginBottom:10}}>📷</div><p style={{fontSize:14,color:"#666",margin:0}}>{t.tapToUpload}</p><p style={{fontSize:12,color:"#aaa",margin:"4px 0 0"}}>{t.supportedFormats}</p></>}
+              {preview?<img src={preview} style={css.previewImg} alt="preview"/>:<><div style={{fontSize:44,marginBottom:10}}>📷</div><p style={{fontSize:14,color:"#666",margin:0}}>{t.tapToUpload}</p><p style={{fontSize:12,color:"#aaa",margin:"4px 0 0"}}>JPG・PNG・PDF対応</p></>}
             </div>
-            <input id="koji-file" type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={onFile}/>
+            <input id="koji-file" type="file" accept="image/*,application/pdf" style={{display:"none"}} onChange={onFile}/>
             {!file&&(
               <div style={{marginTop:12,background:"#FFF8E1",borderRadius:10,padding:"10px 14px",fontSize:12,color:"#E65100"}}>
-                <div style={{fontWeight:700,marginBottom:6}}>📸 きれいに撮るコツ</div>
-                <div>・明るい場所で撮影する</div>
-                <div>・書類を真上から撮る（斜めにしない）</div>
+                <div style={{fontWeight:700,marginBottom:6}}>📸 きれいに撮るコツ / 📄 PDFも対応</div>
+                <div>・PDFファイルはそのまま選択できます</div>
+                <div>・写真は明るい場所で撮影する</div>
+                <div>・書類を真上から撮る（斜め・逆さでも読み取ります）</div>
                 <div>・影が書類にかからないようにする</div>
                 <div>・文字全体が枠内に収まるようにする</div>
-                <div>・手ブレに注意してゆっくり撮る</div>
               </div>
             )}
             {file&&!aiResult&&<button style={{...css.btnPrimary,marginTop:12}} onClick={readImage} disabled={loading}>{loading?<><span style={css.spinner}/>{t.reading}</>:`🤖 ${t.readBtn}`}</button>}
@@ -374,7 +375,7 @@ function TempPage({t,projects,tempData,onUpdate,token}){
   const projList=[...new Map(tempData.map(d=>[d.project_id,{id:d.project_id,name:d.project_name}])).values()];
 
   const moveToFolder=(ids,folder)=>{
-    const updated=tempData.map(d=>ids.includes(d.id)?{...d,folder}:d);
+    const updated=tempData.map(d=>ids.includes(d.id)?{...d,folder:folder||null}:d);
     onUpdate(updated);
   };
 
@@ -569,14 +570,17 @@ function TempCard({d,t,viewMode,onDragStart,cats,catColors,catBg,onMove,currentF
       {viewMode==="grid"&&total&&<div style={{fontSize:14,fontWeight:700,color:color||C.ink,marginTop:6}}>¥{Number(total).toLocaleString()}</div>}
       {/* 操作ボタン */}
       {!d.exported&&(
-        <div style={{display:"flex",gap:6,flexShrink:0,flexDirection:viewMode==="grid"?"row":"column",marginTop:viewMode==="grid"?"8px":0}}>
+        <div style={{display:"flex",gap:6,flexShrink:0,flexDirection:viewMode==="grid"?"row":"column",marginTop:viewMode==="grid"?"8px":0,flexWrap:"wrap"}}>
           <button style={{...css.btnSmall,fontSize:11}} onClick={e=>{e.stopPropagation();setEditing(true);}}>✏️ {t.editRecord}</button>
           <button style={{...css.btnSmall,fontSize:11,color:C.red,borderColor:C.red}} onClick={e=>{e.stopPropagation();if(window.confirm(t.confirmDelete))onDelete();}}>🗑 {t.deleteRecord}</button>
+          {currentFolder&&(
+            <button style={{...css.btnSmall,fontSize:11,color:C.orange,borderColor:C.orange}} onClick={e=>{e.stopPropagation();onMove(null);}}>📤 取り出す</button>
+          )}
         </div>
       )}
-      {!d.exported&&!currentFolder&&(
-        <select style={{...css.select,width:viewMode==="grid"?"100%":"120px",marginTop:viewMode==="grid"?"8px":0,fontSize:11,padding:"5px 8px"}} value="" onChange={e=>e.target.value&&onMove(e.target.value)}>
-          <option value="">→ 移動</option>
+      {!d.exported&&(
+        <select style={{...css.select,width:viewMode==="grid"?"100%":"130px",marginTop:viewMode==="grid"?"8px":0,fontSize:11,padding:"5px 8px"}} value={currentFolder||""} onChange={e=>onMove(e.target.value||null)}>
+          <option value="">未仕分け</option>
           {cats.map(c=><option key={c} value={c}>{c}</option>)}
         </select>
       )}

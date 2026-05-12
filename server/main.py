@@ -108,7 +108,7 @@ async def login(request: Request):
 @app.get("/api/projects")
 async def get_projects(user_id: str = Depends(verify_token)):
     data = load()
-    return {"projects": data["projects"]}
+    return {"projects": [p for p in data["projects"] if p.get("owner") == user_id]}
 
 @app.post("/api/projects")
 async def create_project(request: Request, user_id: str = Depends(verify_token)):
@@ -125,6 +125,7 @@ async def create_project(request: Request, user_id: str = Depends(verify_token))
         "start":  body.get("start", datetime.now().strftime("%Y-%m-%d")),
         "person": body.get("person", ""),
         "done":   False,
+        "owner":  user_id,
     }
     data["projects"].append(project)
     save(data)
@@ -134,7 +135,7 @@ async def create_project(request: Request, user_id: str = Depends(verify_token))
 async def complete_project(project_id: str, user_id: str = Depends(verify_token)):
     data = load()
     for p in data["projects"]:
-        if p["id"] == project_id:
+        if p["id"] == project_id and p.get("owner") == user_id:
             p["done"] = True
             save(data)
             return {"ok": True}
@@ -144,10 +145,9 @@ async def complete_project(project_id: str, user_id: str = Depends(verify_token)
 async def delete_project(project_id: str, user_id: str = Depends(verify_token)):
     data = load()
     before = len(data["projects"])
-    data["projects"] = [p for p in data["projects"] if p["id"] != project_id]
+    data["projects"] = [p for p in data["projects"] if not (p["id"] == project_id and p.get("owner") == user_id)]
     if len(data["projects"]) == before:
         raise HTTPException(404, "工事が見つかりません")
-    # 関連キューも削除
     data["queue"] = [r for r in data["queue"] if r["project_id"] != project_id]
     save(data)
     return {"ok": True}
@@ -198,9 +198,10 @@ async def create_record(request: Request, user_id: str = Depends(verify_token)):
 # =========================================================
 # Claude API 画像読み取り（高精度版：Opus + 2段階読み取り）
 # =========================================================
-async def ai_read(image_bytes: bytes, category: str) -> dict:
-    client = anthropic.Anthropic(api_key=CLAUDE_KEY)
-    b64    = base64.standard_b64encode(image_bytes).decode()
+async def ai_read(image_bytes: bytes, category: str, media_type: str = "image/jpeg") -> dict:
+    client   = anthropic.Anthropic(api_key=CLAUDE_KEY)
+    b64      = base64.standard_b64encode(image_bytes).decode()
+    is_pdf   = media_type == "application/pdf"
 
     cat_hint = {
         "材料費": "建築・土木工事の材料購入レシート・納品書（セメント・木材・鉄筋・砂利・塗料・ボルト・釘など）",
@@ -255,14 +256,20 @@ async def ai_read(image_bytes: bytes, category: str) -> dict:
 }}"""
 
     # 1回目の読み取り
+    # PDF・画像どちらも対応
+    if is_pdf:
+        file_content = {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": b64}}
+    else:
+        file_content = {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}}
+
     msg1 = client.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-opus-4-5",
         max_tokens=2000,
-        system=system,
+        system=system + ("\n- PDFの場合、全ページから情報を読み取り最初のページの書類を優先してください" if is_pdf else "\n- 画像が横向き・逆さでも正しい向きに補正して読み取ってください"),
         messages=[{
             "role": "user",
             "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
+                file_content,
                 {"type": "text", "text": prompt_1st},
             ],
         }],
@@ -286,14 +293,14 @@ async def ai_read(image_bytes: bytes, category: str) -> dict:
 確信が持てない場合はnullのままにしてください。"""
 
         msg2 = client.messages.create(
-            model="claude-sonnet-4-5",
+            model="claude-opus-4-5",
             max_tokens=2000,
             system=system,
             messages=[
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
+                        file_content,
                         {"type": "text", "text": prompt_1st},
                     ],
                 },
@@ -331,6 +338,7 @@ async def ai_read(image_bytes: bytes, category: str) -> dict:
 @app.get("/api/queue")
 async def get_queue():
     data = load()
+    # PCエージェント向け：全キューと全プロジェクトを返す（PCエージェントは認証なしでアクセス）
     return {"queue": [r for r in data["queue"] if not r["done"]], "projects": data["projects"]}
 
 @app.post("/api/queue/done")
@@ -411,30 +419,34 @@ async def read_temp_record(request: Request, user_id: str = Depends(verify_token
     if not image_b64:
         raise HTTPException(400, "image_b64 は必須です")
 
+    # メディアタイプ判定（PDF対応）
+    media_type = body.get("media_type", "image/jpeg")
+    is_pdf = media_type == "application/pdf"
+
     data = load()
 
     # project_idがない場合は新規登録
     if not project_id:
         if not project_name:
             raise HTTPException(400, "project_id または project_name が必要です")
-        # 同名の工事が既にあれば再利用
-        existing = next((p for p in data["projects"] if p["name"] == project_name and not p.get("done")), None)
+        # 同名の工事が既にあれば再利用（同一ユーザーのみ）
+        existing = next((p for p in data["projects"] if p["name"] == project_name and not p.get("done") and p.get("owner") == user_id), None)
         if existing:
             project_id = existing["id"]
             project = existing
         else:
             project_id = f"P{int(datetime.now().timestamp())}"
             num = project_num or f"{datetime.now().year}-{len(data['projects'])+1:03d}"
-            project = {"id": project_id, "name": project_name, "num": num, "start": project_start, "person": project_person, "done": False}
+            project = {"id": project_id, "name": project_name, "num": num, "start": project_start, "person": project_person, "done": False, "owner": user_id}
             data["projects"].append(project)
             save(data)
     else:
-        project = next((p for p in data["projects"] if p["id"] == project_id), None)
+        project = next((p for p in data["projects"] if p["id"] == project_id and p.get("owner") == user_id), None)
         if not project:
             raise HTTPException(404, "工事が見つかりません")
 
     try:
-        result = await ai_read(base64.b64decode(image_b64), "不明")
+        result = await ai_read(base64.b64decode(image_b64), "不明", media_type=body.get("media_type", "image/jpeg"))
     except ValueError as e:
         raise HTTPException(422, detail={
             "message": "画像を読み取れませんでした。明るく・文字がはっきり写った写真で再度お試しください。",
