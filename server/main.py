@@ -59,7 +59,27 @@ def get_drive_service():
     if not creds_b64:
         return None
     try:
-        creds_json = base64.b64decode(creds_b64).decode("utf-8")
+        # 改行・スペース・不要文字を除去してからデコード
+        creds_b64_clean = re.sub(r'[\s]', '', creds_b64)
+        # base64パディング補正
+        padding = 4 - len(creds_b64_clean) % 4
+        if padding != 4:
+            creds_b64_clean += '=' * padding
+        creds_json = base64.b64decode(creds_b64_clean).decode("utf-8")
+        # JSONの余分な文字を除去
+        creds_json = creds_json.strip()
+        # 複数のJSONが連結されている場合は最初のJSONオブジェクトだけ使う
+        brace_count = 0
+        end_idx = 0
+        for i, ch in enumerate(creds_json):
+            if ch == '{':
+                brace_count += 1
+            elif ch == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end_idx = i + 1
+                    break
+        creds_json = creds_json[:end_idx]
         creds_info = json.loads(creds_json)
         creds = service_account.Credentials.from_service_account_info(
             creds_info,
