@@ -390,9 +390,16 @@ function TempPage({t,projects,tempData,onUpdate,token}){
     if(items.length===0){alert("エクスポートするデータがありません");return;}
     if(!window.confirm(t.confirmExport))return;
     try{
-      await apiFetch("/api/records/export",{method:"POST",body:JSON.stringify({project_id:projId,category:folder,records:items.map(d=>d.ai_result)})},token);
-      const updated=tempData.map(d=>items.find(i=>i.id===d.id)?{...d,exported:true}:d);
-      onUpdate(updated);setExportMsg(t.exportSuccess);setTimeout(()=>setExportMsg(""),3000);
+      const d=await apiFetch("/api/records/export",{method:"POST",body:JSON.stringify({project_id:projId,category:folder,records:items.map(d=>d.ai_result)})},token);
+      const updated=tempData.map(td=>items.find(i=>i.id===td.id)?{...td,exported:true,drive_link:d.drive_link}:td);
+      onUpdate(updated);
+      if(d.drive_link){
+        setExportMsg(`✅ Google Driveに保存しました。`);
+        window.open(d.drive_link,"_blank");
+      }else{
+        setExportMsg(t.exportSuccess);
+      }
+      setTimeout(()=>setExportMsg(""),5000);
     }catch(e){alert("エクスポートに失敗しました："+e.message);}
   };
 

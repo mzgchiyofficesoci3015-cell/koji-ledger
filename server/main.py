@@ -5,7 +5,7 @@
 - Claude APIで画像読み取り
 - PCエージェント向けキューAPI
 """
-import os, json, base64, re, hashlib, secrets
+import os, json, base64, re, hashlib, secrets, io, tempfile
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -14,6 +14,18 @@ from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
+# Google Drive
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseUpload
+    GDRIVE_AVAILABLE = True
+except ImportError:
+    GDRIVE_AVAILABLE = False
 
 app = FastAPI()
 
@@ -36,6 +48,27 @@ DATA_FILE.parent.mkdir(exist_ok=True)
 
 CATEGORIES  = ["材料費", "人件費", "外注費", "経費"]
 security    = HTTPBearer()
+CAT_COLORS  = {"材料費": "1565C0", "人件費": "2E7D32", "外注費": "6A1B9A", "経費": "E65100"}
+GDRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
+
+def get_drive_service():
+    """Google Drive サービスを取得"""
+    if not GDRIVE_AVAILABLE or not GDRIVE_FOLDER_ID:
+        return None
+    creds_b64 = os.environ.get("GOOGLE_CREDENTIALS_B64", "")
+    if not creds_b64:
+        return None
+    try:
+        creds_json = base64.b64decode(creds_b64).decode("utf-8")
+        creds_info = json.loads(creds_json)
+        creds = service_account.Credentials.from_service_account_info(
+            creds_info,
+            scopes=["https://www.googleapis.com/auth/drive"]
+        )
+        return build("drive", "v3", credentials=creds)
+    except Exception as e:
+        print(f"Google Drive接続エラー: {e}")
+        return None
 
 # =========================================================
 # データ管理
@@ -474,34 +507,140 @@ async def read_temp_record(request: Request, user_id: str = Depends(verify_token
     return {"ai_result": result, "project_id": project_id, "project": project}
 
 # =========================================================
-# 一時保管からエクスポート（費目を指定してキューへ）
+# 一時保管からエクスポート → Google Driveに保存
 # =========================================================
+
+def _border():
+    s = Side(style="thin", color="CCCCCC")
+    return Border(left=s, right=s, top=s, bottom=s)
+
+def build_excel(project: dict, category: str, records: list) -> bytes:
+    """Excelファイルをメモリ上で生成してバイトとして返す"""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = category
+    color = CAT_COLORS.get(category, "333333")
+
+    # タイトル行
+    ws.merge_cells("A1:I1")
+    ws["A1"] = f"{project['name']}　{category}台帳"
+    ws["A1"].font      = Font(name="游ゴシック", bold=True, size=13, color="FFFFFF")
+    ws["A1"].fill      = PatternFill("solid", fgColor=color)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 28
+
+    # 工事情報行
+    ws["A2"] = f"工事番号：{project.get('num','')}　開始日：{project.get('start','')}"
+    ws["A2"].font = Font(name="游ゴシック", size=10, color="666666")
+
+    # ヘッダー行
+    headers = ["日付","費目","品名・作業内容","数量","単位","単価","金額","仕入先・外注先","備考"]
+    for col, h in enumerate(headers, 1):
+        c = ws.cell(row=3, column=col, value=h)
+        c.font      = Font(name="游ゴシック", bold=True, size=10, color="FFFFFF")
+        c.fill      = PatternFill("solid", fgColor=color)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border    = _border()
+    ws.row_dimensions[3].height = 22
+
+    # 列幅
+    for i, w in enumerate([12, 10, 30, 8, 6, 10, 12, 20, 20], 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A4"
+
+    # データ行
+    row = 4
+    for ai in records:
+        items = ai.get("明細", []) or [{"品名_作業内容": "", "数量": None, "単位": None, "単価": None, "金額": ai.get("合計金額", 0)}]
+        for item in items:
+            row_data = [
+                ai.get("日付", ""), category,
+                item.get("品名_作業内容", ""),
+                item.get("数量"), item.get("単位"), item.get("単価"),
+                item.get("金額") or 0,
+                ai.get("仕入先_外注先", ""), ai.get("備考", ""),
+            ]
+            for col, val in enumerate(row_data, 1):
+                c = ws.cell(row=row, column=col, value=val)
+                c.font   = Font(name="游ゴシック", size=10)
+                c.border = _border()
+                if col == 7 and val:
+                    c.number_format = "#,##0"
+            row += 1
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+def get_or_create_folder(service, name: str, parent_id: str) -> str:
+    """指定名のフォルダを取得または作成してIDを返す"""
+    q = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and '{parent_id}' in parents and trashed=false"
+    res = service.files().list(q=q, fields="files(id,name)").execute()
+    files = res.get("files", [])
+    if files:
+        return files[0]["id"]
+    meta = {"name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]}
+    folder = service.files().create(body=meta, fields="id").execute()
+    return folder["id"]
+
+def upload_to_drive(service, excel_bytes: bytes, filename: str, folder_id: str) -> str:
+    """ExcelをGoogle Driveにアップロードしてファイルリンクを返す"""
+    # 同名ファイルが既にある場合は削除
+    q = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
+    res = service.files().list(q=q, fields="files(id)").execute()
+    for f in res.get("files", []):
+        service.files().delete(fileId=f["id"]).execute()
+
+    media = MediaIoBaseUpload(
+        io.BytesIO(excel_bytes),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    meta = {"name": filename, "parents": [folder_id]}
+    file = service.files().create(body=meta, media_body=media, fields="id,webViewLink").execute()
+    return file.get("webViewLink", "")
+
 @app.post("/api/records/export")
 async def export_records(request: Request, user_id: str = Depends(verify_token)):
     body       = await request.json()
     project_id = body.get("project_id")
     category   = body.get("category")
     records    = body.get("records", [])
+
     if not all([project_id, category]) or not records:
         raise HTTPException(400, "project_id・category・records は必須です")
     if category not in CATEGORIES:
         raise HTTPException(400, f"費目は {CATEGORIES} のいずれかを指定してください")
+
     data    = load()
-    project = next((p for p in data["projects"] if p["id"] == project_id), None)
+    project = next((p for p in data["projects"] if p["id"] == project_id and p.get("owner") == user_id), None)
     if not project:
         raise HTTPException(404, "工事が見つかりません")
-    for i, ai_result in enumerate(records):
-        ai_result["費目"] = category
-        record = {
-            "id":           f"R{int(datetime.now().timestamp())}{i}",
-            "project_id":   project_id,
-            "project_name": project["name"],
-            "project_num":  project["num"],
-            "category":     category,
-            "ai_result":    ai_result,
-            "queued_at":    datetime.now().isoformat(),
-            "done":         False,
-        }
-        data["queue"].append(record)
-    save(data)
-    return {"ok": True, "queued": len(records)}
+
+    # Excelを生成
+    ai_results = [r if isinstance(r, dict) and "日付" in r else r for r in records]
+    excel_bytes = build_excel(project, category, ai_results)
+
+    # Google Driveにアップロード
+    service = get_drive_service()
+    if not service:
+        raise HTTPException(500, "Google Drive接続に失敗しました。管理者にお問い合わせください。")
+
+    try:
+        # フォルダ構成：工事台帳_タイチョウ / 工事名 / エクスポート済み
+        safe_name    = project["name"].replace("/", "／")
+        proj_folder  = get_or_create_folder(service, safe_name, GDRIVE_FOLDER_ID)
+        export_folder= get_or_create_folder(service, "エクスポート済み", proj_folder)
+
+        # ファイル名：費目_日時.xlsx
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        filename  = f"{category}_{timestamp}.xlsx"
+        link      = upload_to_drive(service, excel_bytes, filename, export_folder)
+
+        # 工事台帳Excel（全費目集計）も更新
+        ledger_filename = f"工事台帳_{safe_name}_{project.get('num','')}.xlsx"
+        # 既存の工事台帳があれば取得して追記、なければ新規作成は次フェーズ
+
+        return {"ok": True, "drive_link": link, "filename": filename}
+
+    except Exception as e:
+        raise HTTPException(500, f"Google Driveへのアップロードに失敗しました: {str(e)}")
