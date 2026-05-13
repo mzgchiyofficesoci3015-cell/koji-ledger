@@ -315,10 +315,15 @@ async def ai_read(image_bytes: bytes, category: str, media_type: str = "image/jp
     else:
         file_content = {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}}
 
+    rotation_hint = """
+- 画像が横向き・逆さ・斜めになっていても、書類の内容から正しい向きを判断して読み取ってください
+- 書類の向きは文字の方向・金額の位置・日付の位置から判断してください
+- 向きを補正した上で全ての情報を読み取ってください"""
+
     msg1 = client.messages.create(
         model="claude-opus-4-5",
         max_tokens=2000,
-        system=system + ("\n- PDFの場合、全ページから情報を読み取り最初のページの書類を優先してください" if is_pdf else "\n- 画像が横向き・逆さでも正しい向きに補正して読み取ってください"),
+        system=system + ("\n- PDFの場合、全ページから情報を読み取り最初のページの書類を優先してください" if is_pdf else rotation_hint),
         messages=[{
             "role": "user",
             "content": [
@@ -594,28 +599,122 @@ def build_excel(project: dict, category: str, records: list) -> bytes:
 
 @app.post("/api/records/export")
 async def export_records(request: Request, user_id: str = Depends(verify_token)):
+    """
+    工事単位でまとめてエクスポート。
+    同じ工事の既存Excelがある場合は追記する。
+    records は {category: str, ai_result: dict} のリスト。
+    """
     body       = await request.json()
     project_id = body.get("project_id")
-    category   = body.get("category")
-    records    = body.get("records", [])
+    records    = body.get("records", [])  # [{category, ai_result}, ...]
 
-    if not all([project_id, category]) or not records:
-        raise HTTPException(400, "project_id・category・records は必須です")
-    if category not in CATEGORIES:
-        raise HTTPException(400, f"費目は {CATEGORIES} のいずれかを指定してください")
+    if not project_id or not records:
+        raise HTTPException(400, "project_id・records は必須です")
 
     data    = load()
     project = next((p for p in data["projects"] if p["id"] == project_id and p.get("owner") == user_id), None)
     if not project:
         raise HTTPException(404, "工事が見つかりません")
 
-    # Excelを生成してbase64で返す
-    excel_bytes = build_excel(project, category, records)
-    excel_b64   = base64.b64encode(excel_bytes).decode()
-    safe_name   = project["name"].replace("/", "／")
-    timestamp   = datetime.now().strftime("%Y%m%d_%H%M")
-    filename    = f"{safe_name}_{category}_{timestamp}.xlsx"
+    # 費目ごとにグループ化
+    by_cat = {cat: [] for cat in CATEGORIES}
+    for r in records:
+        cat = r.get("category")
+        if cat in CATEGORIES:
+            by_cat[cat].append(r.get("ai_result", {}))
 
-    return {"ok": True, "excel_b64": excel_b64, "filename": filename}
+    # 既存Excelがあれば読み込み、なければ新規作成
+    safe_name = project["name"].replace("/", "／")
+    filename  = f"工事台帳_{safe_name}.xlsx"
+
+    # store.jsonにExcelデータをキャッシュ（追記対応）
+    if "excel_cache" not in data:
+        data["excel_cache"] = {}
+
+    cache_key = f"{user_id}_{project_id}"
+
+    if cache_key in data["excel_cache"]:
+        # 既存データに追記
+        existing_b64 = data["excel_cache"][cache_key]
+        wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(existing_b64)))
+    else:
+        # 新規作成
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+        # 集計シート
+        ws_sum = wb.create_sheet("集計", 0)
+        ws_sum.merge_cells("A1:D1")
+        ws_sum["A1"] = f"工事台帳　{project['name']}"
+        ws_sum["A1"].font = Font(name="游ゴシック", bold=True, size=14)
+        ws_sum["A2"] = f"工事番号：{project.get('num','')}　開始日：{project.get('start','')}"
+        ws_sum["A2"].font = Font(name="游ゴシック", size=10, color="666666")
+        ws_sum["A4"] = "費目"; ws_sum["B4"] = "合計金額（円）"
+        ws_sum["A4"].font = ws_sum["B4"].font = Font(bold=True)
+        for i, cat in enumerate(CATEGORIES, 5):
+            ws_sum.cell(row=i, column=1, value=cat)
+            ws_sum.cell(row=i, column=2, value=f"=SUMIF('{cat}'!B:B,A{i},'{cat}'!G:G)")
+            ws_sum.cell(row=i, column=2).number_format = "#,##0"
+        ws_sum.cell(row=9, column=1, value="合計").font = Font(bold=True)
+        ws_sum.cell(row=9, column=2, value="=SUM(B5:B8)").font = Font(bold=True)
+        ws_sum.cell(row=9, column=2).number_format = "#,##0"
+        ws_sum.column_dimensions["A"].width = 15
+        ws_sum.column_dimensions["B"].width = 18
+        # 費目シート作成
+        for cat in CATEGORIES:
+            _setup_cat_sheet(wb.create_sheet(cat), project, cat)
+
+    # 各費目シートにデータ追記
+    for cat, ai_list in by_cat.items():
+        if not ai_list:
+            continue
+        ws = wb[cat] if cat in wb.sheetnames else _setup_cat_sheet(wb.create_sheet(cat), project, cat)
+        row = 4
+        while ws.cell(row=row, column=1).value is not None:
+            row += 1
+        for ai in ai_list:
+            items = ai.get("明細", []) or [{"品名_作業内容": "", "数量": None, "単位": None, "単価": None, "金額": ai.get("合計金額", 0)}]
+            for item in items:
+                row_data = [ai.get("日付",""), cat, item.get("品名_作業内容",""), item.get("数量"), item.get("単位"), item.get("単価"), item.get("金額") or 0, ai.get("仕入先_外注先",""), ai.get("備考","")]
+                for col, val in enumerate(row_data, 1):
+                    c = ws.cell(row=row, column=col, value=val)
+                    c.font = Font(name="游ゴシック", size=10)
+                    c.border = _border()
+                    if col == 7 and val:
+                        c.number_format = "#,##0"
+                row += 1
+
+    # Excelをbase64に変換してキャッシュに保存
+    buf = io.BytesIO()
+    wb.save(buf)
+    excel_bytes = buf.getvalue()
+    data["excel_cache"][cache_key] = base64.b64encode(excel_bytes).decode()
+    save(data)
+
+    return {"ok": True, "excel_b64": data["excel_cache"][cache_key], "filename": filename}
+
+
+def _setup_cat_sheet(ws, project, cat):
+    """費目シートの初期設定"""
+    color = CAT_COLORS.get(cat, "333333")
+    ws.merge_cells("A1:I1")
+    ws["A1"] = f"{project['name']}　{cat}台帳"
+    ws["A1"].font      = Font(name="游ゴシック", bold=True, size=13, color="FFFFFF")
+    ws["A1"].fill      = PatternFill("solid", fgColor=color)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 28
+    ws["A2"] = f"工事番号：{project.get('num','')}　開始日：{project.get('start','')}"
+    ws["A2"].font = Font(name="游ゴシック", size=10, color="666666")
+    headers = ["日付","費目","品名・作業内容","数量","単位","単価","金額","仕入先・外注先","備考"]
+    for col, h in enumerate(headers, 1):
+        c = ws.cell(row=3, column=col, value=h)
+        c.font      = Font(name="游ゴシック", bold=True, size=10, color="FFFFFF")
+        c.fill      = PatternFill("solid", fgColor=color)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border    = _border()
+    ws.row_dimensions[3].height = 22
+    for i, w in enumerate([12, 10, 30, 8, 6, 10, 12, 20, 20], 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A4"
+    return ws
 
 

@@ -385,13 +385,14 @@ function TempPage({t,projects,tempData,onUpdate,token}){
     setDragId(null);
   };
 
-  const exportFolder=async(projId,folder)=>{
-    const items=tempData.filter(d=>d.project_id===projId&&d.folder===folder&&!d.exported);
-    if(items.length===0){alert("エクスポートするデータがありません");return;}
-    if(!window.confirm(t.confirmExport))return;
+  // 工事単位でまとめてエクスポート
+  const exportProject=async(projId)=>{
+    const items=tempData.filter(d=>d.project_id===projId&&d.folder&&!d.exported);
+    if(items.length===0){alert("エクスポートできるデータがありません。\n費目フォルダに仕分けされていないデータはエクスポートできません。");return;}
+    if(!window.confirm(`${items.length}件のデータをExcelにエクスポートします。よろしいですか？`))return;
     try{
-      const d=await apiFetch("/api/records/export",{method:"POST",body:JSON.stringify({project_id:projId,category:folder,records:items.map(d=>d.ai_result)})},token);
-      // base64からExcelファイルをダウンロード
+      const records=items.map(d=>({category:d.folder,ai_result:d.ai_result}));
+      const d=await apiFetch("/api/records/export",{method:"POST",body:JSON.stringify({project_id:projId,records})},token);
       const binary=atob(d.excel_b64);
       const bytes=new Uint8Array(binary.length);
       for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
@@ -400,12 +401,23 @@ function TempPage({t,projects,tempData,onUpdate,token}){
       const a=document.createElement("a");
       a.href=url; a.download=d.filename; a.click();
       URL.revokeObjectURL(url);
-      // エクスポート済みに更新
       const updated=tempData.map(td=>items.find(i=>i.id===td.id)?{...td,exported:true}:td);
       onUpdate(updated);
       setExportMsg("✅ Excelをダウンロードしました："+d.filename);
       setTimeout(()=>setExportMsg(""),5000);
     }catch(e){alert("エクスポートに失敗しました："+e.message);}
+  };
+
+  // 工事単位で一括削除
+  const deleteProject=async(projId,projName)=>{
+    const items=tempData.filter(d=>d.project_id===projId);
+    if(!window.confirm(`「${projName}」の一時保管データ${items.length}件を全て削除しますか？`))return;
+    onUpdate(tempData.filter(d=>d.project_id!==projId));
+  };
+
+  // 個別削除（既存のonDeleteと統合）
+  const exportFolder=async(projId,folder)=>{
+    // 後方互換のため残す（使用しない）
   };
 
   const unsorted=filtered.filter(d=>!d.folder);
@@ -438,7 +450,13 @@ function TempPage({t,projects,tempData,onUpdate,token}){
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
           <span style={{fontSize:13,fontWeight:600,color:C.ink}}>{t.tempTitle}</span>
           <span style={{fontSize:12,color:C.sub}}>{filtered.length}{t.itemCount}</span>
-          <div style={{marginLeft:"auto",display:"flex",gap:6}}>
+          <div style={{marginLeft:"auto",display:"flex",gap:6,flexWrap:"wrap"}}>
+            {selProj!=="all"&&(
+              <>
+                <button style={{...css.btnSmall,background:C.ink,color:"#fff",fontSize:11}} onClick={()=>exportProject(selProj)}>⬇ 工事まとめてExcel</button>
+                <button style={{...css.btnSmall,color:C.red,borderColor:C.red,fontSize:11}} onClick={()=>{const p=projList.find(x=>x.id===selProj);if(p)deleteProject(selProj,p.name);}}>🗑 工事一括削除</button>
+              </>
+            )}
             <button style={{...css.btnSmall,background:viewMode==="list"?C.ink:"#fff",color:viewMode==="list"?"#fff":C.ink}} onClick={()=>setViewMode("list")}>☰ {t.viewList}</button>
             <button style={{...css.btnSmall,background:viewMode==="grid"?C.ink:"#fff",color:viewMode==="grid"?"#fff":C.ink}} onClick={()=>setViewMode("grid")}>⊞ {t.viewGrid}</button>
           </div>
@@ -479,10 +497,6 @@ function TempPage({t,projects,tempData,onUpdate,token}){
                 <span style={{fontSize:13,fontWeight:700,color:CAT_COLORS[cat]}}>{cat}</span>
                 <span style={{fontSize:11,color:C.sub}}>（{items.length}件）</span>
                 <div style={{marginLeft:"auto",display:"flex",gap:6}}>
-                  {projsInFolder.map(pid=>{
-                    const pname=items.find(d=>d.project_id===pid)?.project_name||pid;
-                    return <button key={pid} style={{...css.btnSmall,fontSize:11,color:CAT_COLORS[cat],borderColor:CAT_COLORS[cat]}} onClick={()=>exportFolder(pid,cat)}>⬇ {pname} エクスポート</button>;
-                  })}
                 </div>
               </div>
               <div style={{display:viewMode==="grid"?"grid":"flex",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",flexDirection:"column",gap:8}}>
