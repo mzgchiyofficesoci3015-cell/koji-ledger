@@ -27,7 +27,12 @@ const T = {
     newProject:"新規工事登録", complete:"完了にする", active:"進行中", done:"完了",
     register_project:"工事を登録",
     nav:{ add:"追加", list:"一覧", temp:"一時保管" },
-    requiredError:"工事名と開始日は必須です",
+    requiredError:"工事名・開始日・請負金額は必須です",
+    location:"工事場所（任意）",
+    contractAmount:"請負金額（必須）",
+    contractAmountPlaceholder:"例：1500000",
+    completionDate:"完成日（必須）",
+    confirmCompleteWithDate:"完成日を入力して工事を完了にしてください。",
     selectCategory:"費用項目を選択してください",
     uploadFirst:"写真を選択してください",
     manualRequiredError:"日付と金額は必須です",
@@ -177,7 +182,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
   };
 
   const goStep2=()=>{
-    if(!selId&&(!newName||!newStart)){setError(t.requiredError);return;}
+    if(!selId&&(!newName||!newStart||!newContract)){setError(t.requiredError);return;}
     setError("");setStep(2);
   };
 
@@ -201,7 +206,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
       const mediaType = file.type || "image/jpeg";
       const payload=selId
         ?{project_id:selId,image_b64:b64,media_type:mediaType}
-        :{project_name:newName,project_num:newNum,project_start:newStart,project_person:newPerson,image_b64:b64,media_type:mediaType};
+        :{project_name:newName,project_num:newNum,project_start:newStart,project_person:newPerson,project_location:newLocation,project_contract:newContract,image_b64:b64,media_type:mediaType};
 
       // エラー詳細を取得するためapiFetchを直接使わず自前でfetch
       const headers={"Content-Type":"application/json",Authorization:`Bearer ${token}`};
@@ -273,7 +278,9 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
               <div><label style={css.label}>{t.startDate}</label><input style={css.input} type="date" value={newStart} onChange={e=>{setNewStart(e.target.value);setSelId("");}}/></div>
               <div><label style={css.label}>{t.projectNum}</label><input style={css.input} value={newNum} placeholder="例：2024-001" onChange={e=>setNewNum(e.target.value)}/></div>
             </div>
-            <div><label style={css.label}>{t.person}</label><input style={css.input} value={newPerson} placeholder="例：山田" onChange={e=>setNewPerson(e.target.value)}/></div>
+            <div style={{marginBottom:12}}><label style={css.label}>{t.person}</label><input style={css.input} value={newPerson} placeholder="例：山田" onChange={e=>setNewPerson(e.target.value)}/></div>
+            <div style={{marginBottom:12}}><label style={css.label}>{t.location||"工事場所（任意）"}</label><input style={css.input} value={newLocation} placeholder="例：○○市△△町1-2-3" onChange={e=>setNewLocation(e.target.value)}/></div>
+            <div><label style={css.label}>{t.contractAmount||"請負金額（必須）"}</label><input style={css.input} value={newContract} placeholder="例：1500000" onChange={e=>setNewContract(e.target.value)}/></div>
           </div>
           {error&&<div style={css.errorBox}>{error}</div>}
           <button style={{...css.btnPrimary,marginTop:18}} onClick={goStep2}>{t.next} →</button>
@@ -619,17 +626,26 @@ function ProjectList({t,projects,token,onRefresh}){
   const [name,setName]=useState(""); const [num,setNum]=useState("");
   const [start,setStart]=useState(""); const [person,setPerson]=useState("");
   const [loading,setLoad]=useState(false); const [error,setError]=useState("");
+  const [location2,setLocation2]=useState("");
+  const [contract2,setContract2]=useState("");
 
   const create=async()=>{
-    if(!name||!start){setError(t.requiredError);return;}
+    if(!name||!start||!contract2){setError("工事名・開始日・請負金額は必須です");return;}
     setLoad(true);
-    try{await apiFetch("/api/projects",{method:"POST",body:JSON.stringify({name,num,start,person})},token);setShowForm(false);setName("");setNum("");setStart("");setPerson("");setError("");await onRefresh();}
+    try{await apiFetch("/api/projects",{method:"POST",body:JSON.stringify({name,num,start,person,location:location2,contract_amount:contract2})},token);setShowForm(false);setName("");setNum("");setStart("");setPerson("");setLocation2("");setContract2("");setError("");await onRefresh();}
     catch(e){setError(e.message);}
     setLoad(false);
   };
+  const [completionDates,setCompletionDates]=useState({});
   const complete=async(id,n)=>{
-    if(!window.confirm(`「${n}」を${t.confirmComplete}`))return;
-    try{await apiFetch(`/api/projects/${id}/done`,{method:"PATCH"},token);await onRefresh();}catch{}
+    const date=window.prompt(`「${n}」を完了にします。
+完成日または完成予定日を入力してください（必須）
+例：2024-11-30`,"");
+    if(!date){alert("完成日は必須です。");return;}
+    try{
+      await apiFetch(`/api/projects/${id}/done`,{method:"PATCH",body:JSON.stringify({completion_date:date})},token);
+      await onRefresh();
+    }catch{}
   };
   const deleteProject=async(id,n)=>{
     if(!window.confirm(`「${n}」を一覧から完全に削除しますか？この操作は元に戻せません。`))return;
@@ -648,6 +664,8 @@ function ProjectList({t,projects,token,onRefresh}){
           {[[t.projectNameRequired,name,setName,"text","田中邸 外壁塗装"],[t.startDate,start,setStart,"date",""],[t.projectNum,num,setNum,"text","2024-001"],[t.person,person,setPerson,"text","山田"]].map(([label,val,setter,type,ph])=>(
             <div key={label} style={{marginBottom:12}}><label style={css.label}>{label}</label><input style={css.input} type={type} value={val} placeholder={ph} onChange={e=>setter(e.target.value)}/></div>
           ))}
+          <div style={{marginBottom:12}}><label style={css.label}>{"工事場所（任意）"}</label><input style={css.input} value={location2} placeholder="例：○○市△△町1-2-3" onChange={e=>setLocation2(e.target.value)}/></div>
+          <div style={{marginBottom:12}}><label style={css.label}>{"請負金額（必須）"}</label><input style={css.input} value={contract2} placeholder="例：1500000" onChange={e=>setContract2(e.target.value)}/></div>
           {error&&<div style={css.errorBox}>{error}</div>}
           <button style={{...css.btnPrimary,opacity:loading?.5:1}} onClick={create} disabled={loading}>{loading?"登録中...":t.register_project}</button>
         </div>

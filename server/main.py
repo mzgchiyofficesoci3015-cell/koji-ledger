@@ -172,24 +172,30 @@ async def create_project(request: Request, user_id: str = Depends(verify_token))
     data    = load()
     num     = body.get("num") or f"{datetime.now().year}-{len(data['projects'])+1:03d}"
     project = {
-        "id":     f"P{int(datetime.now().timestamp())}",
-        "name":   name,
-        "num":    num,
-        "start":  body.get("start", datetime.now().strftime("%Y-%m-%d")),
-        "person": body.get("person", ""),
-        "done":   False,
-        "owner":  user_id,
+        "id":              f"P{int(datetime.now().timestamp())}",
+        "name":            name,
+        "num":             num,
+        "start":           body.get("start", datetime.now().strftime("%Y-%m-%d")),
+        "person":          body.get("person", ""),
+        "location":        body.get("location", ""),
+        "contract_amount": body.get("contract_amount", ""),
+        "done":            False,
+        "owner":           user_id,
     }
     data["projects"].append(project)
     save(data)
     return {"project": project}
 
 @app.patch("/api/projects/{project_id}/done")
-async def complete_project(project_id: str, user_id: str = Depends(verify_token)):
+async def complete_project(project_id: str, request: Request, user_id: str = Depends(verify_token)):
+    body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    completion_date = body.get("completion_date", "") if body else ""
     data = load()
     for p in data["projects"]:
         if p["id"] == project_id and p.get("owner") == user_id:
             p["done"] = True
+            if completion_date:
+                p["completion_date"] = completion_date
             save(data)
             return {"ok": True}
     raise HTTPException(404, "工事が見つかりません")
@@ -495,7 +501,13 @@ async def read_temp_record(request: Request, user_id: str = Depends(verify_token
         else:
             project_id = f"P{int(datetime.now().timestamp())}"
             num = project_num or f"{datetime.now().year}-{len(data['projects'])+1:03d}"
-            project = {"id": project_id, "name": project_name, "num": num, "start": project_start, "person": project_person, "done": False, "owner": user_id}
+            project = {
+                "id": project_id, "name": project_name, "num": num,
+                "start": project_start, "person": project_person,
+                "location": body.get("project_location", ""),
+                "contract_amount": body.get("project_contract", ""),
+                "done": False, "owner": user_id
+            }
             data["projects"].append(project)
             save(data)
     else:
@@ -555,11 +567,11 @@ def build_excel(project: dict, category: str, records: list) -> bytes:
     ws.row_dimensions[1].height = 28
 
     # 工事情報行
-    ws["A2"] = f"工事番号：{project.get('num','')}　開始日：{project.get('start','')}"
+    ws["A2"] = f"工事番号：{project.get('num','')}　開始日：{project.get('start','')}　請負金額：{project.get('contract_amount','')}円　工事場所：{project.get('location','')}"
     ws["A2"].font = Font(name="游ゴシック", size=10, color="666666")
 
-    # ヘッダー行
-    headers = ["日付","費目","品名・作業内容","数量","単位","単価","金額","仕入先・外注先","備考"]
+    # ヘッダー行（備考は自由記載のためAIデータは入れない）
+    headers = ["日付","費目","品名・作業内容","数量","単位","単価","金額","仕入先・外注先","備考（自由記載）"]
     for col, h in enumerate(headers, 1):
         c = ws.cell(row=3, column=col, value=h)
         c.font      = Font(name="游ゴシック", bold=True, size=10, color="FFFFFF")
@@ -583,7 +595,7 @@ def build_excel(project: dict, category: str, records: list) -> bytes:
                 item.get("品名_作業内容", ""),
                 item.get("数量"), item.get("単位"), item.get("単価"),
                 item.get("金額") or 0,
-                ai.get("仕入先_外注先", ""), ai.get("備考", ""),
+                ai.get("仕入先_外注先", ""), "",  # 備考は自由記載のため空欄
             ]
             for col, val in enumerate(row_data, 1):
                 c = ws.cell(row=row, column=col, value=val)
