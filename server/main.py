@@ -632,7 +632,8 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
         raise HTTPException(400, f"費目は {CATEGORIES} のいずれかを指定してください")
 
     data    = load()
-    project = next((p for p in data["projects"] if p["id"] == project_id and p.get("owner") == user_id), None)
+    # owner未設定の古いデータも含めて検索（後方互換）
+    project = next((p for p in data["projects"] if p["id"] == project_id and (p.get("owner") == user_id or not p.get("owner"))), None)
     if not project:
         raise HTTPException(404, "工事が見つかりません")
 
@@ -663,4 +664,6 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
         return {"ok": True, "drive_link": link, "filename": filename}
 
     except Exception as e:
+        import traceback
+        print(f"Google Driveエラー詳細: {traceback.format_exc()}")
         raise HTTPException(500, f"Google Driveへのアップロードに失敗しました: {str(e)}")
