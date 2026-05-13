@@ -527,7 +527,7 @@ async def read_temp_record(request: Request, user_id: str = Depends(verify_token
     return {"ai_result": result, "project_id": project_id, "project": project}
 
 # =========================================================
-# 一時保管からエクスポート → Google Driveに保存
+# 一時保管からエクスポート → Excelをブラウザにダウンロード
 # =========================================================
 
 def _border():
@@ -592,33 +592,6 @@ def build_excel(project: dict, category: str, records: list) -> bytes:
     wb.save(buf)
     return buf.getvalue()
 
-def get_or_create_folder(service, name: str, parent_id: str) -> str:
-    """指定名のフォルダを取得または作成してIDを返す"""
-    q = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and '{parent_id}' in parents and trashed=false"
-    res = service.files().list(q=q, fields="files(id,name)").execute()
-    files = res.get("files", [])
-    if files:
-        return files[0]["id"]
-    meta = {"name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]}
-    folder = service.files().create(body=meta, fields="id").execute()
-    return folder["id"]
-
-def upload_to_drive(service, excel_bytes: bytes, filename: str, folder_id: str) -> str:
-    """ExcelをGoogle Driveにアップロードしてファイルリンクを返す"""
-    # 同名ファイルが既にある場合は削除
-    q = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
-    res = service.files().list(q=q, fields="files(id)").execute()
-    for f in res.get("files", []):
-        service.files().delete(fileId=f["id"]).execute()
-
-    media = MediaIoBaseUpload(
-        io.BytesIO(excel_bytes),
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-    meta = {"name": filename, "parents": [folder_id]}
-    file = service.files().create(body=meta, media_body=media, fields="id,webViewLink").execute()
-    return file.get("webViewLink", "")
-
 @app.post("/api/records/export")
 async def export_records(request: Request, user_id: str = Depends(verify_token)):
     body       = await request.json()
@@ -632,38 +605,17 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
         raise HTTPException(400, f"費目は {CATEGORIES} のいずれかを指定してください")
 
     data    = load()
-    # owner未設定の古いデータも含めて検索（後方互換）
-    project = next((p for p in data["projects"] if p["id"] == project_id and (p.get("owner") == user_id or not p.get("owner"))), None)
+    project = next((p for p in data["projects"] if p["id"] == project_id and p.get("owner") == user_id), None)
     if not project:
         raise HTTPException(404, "工事が見つかりません")
 
-    # Excelを生成
-    ai_results = [r if isinstance(r, dict) and "日付" in r else r for r in records]
-    excel_bytes = build_excel(project, category, ai_results)
+    # Excelを生成してbase64で返す
+    excel_bytes = build_excel(project, category, records)
+    excel_b64   = base64.b64encode(excel_bytes).decode()
+    safe_name   = project["name"].replace("/", "／")
+    timestamp   = datetime.now().strftime("%Y%m%d_%H%M")
+    filename    = f"{safe_name}_{category}_{timestamp}.xlsx"
 
-    # Google Driveにアップロード
-    service = get_drive_service()
-    if not service:
-        raise HTTPException(500, "Google Drive接続に失敗しました。管理者にお問い合わせください。")
+    return {"ok": True, "excel_b64": excel_b64, "filename": filename}
 
-    try:
-        # フォルダ構成：工事台帳_タイチョウ / 工事名 / エクスポート済み
-        safe_name    = project["name"].replace("/", "／")
-        proj_folder  = get_or_create_folder(service, safe_name, GDRIVE_FOLDER_ID)
-        export_folder= get_or_create_folder(service, "エクスポート済み", proj_folder)
 
-        # ファイル名：費目_日時.xlsx
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        filename  = f"{category}_{timestamp}.xlsx"
-        link      = upload_to_drive(service, excel_bytes, filename, export_folder)
-
-        # 工事台帳Excel（全費目集計）も更新
-        ledger_filename = f"工事台帳_{safe_name}_{project.get('num','')}.xlsx"
-        # 既存の工事台帳があれば取得して追記、なければ新規作成は次フェーズ
-
-        return {"ok": True, "drive_link": link, "filename": filename}
-
-    except Exception as e:
-        import traceback
-        print(f"Google Driveエラー詳細: {traceback.format_exc()}")
-        raise HTTPException(500, f"Google Driveへのアップロードに失敗しました: {str(e)}")

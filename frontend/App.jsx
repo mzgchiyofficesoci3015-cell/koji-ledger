@@ -391,14 +391,19 @@ function TempPage({t,projects,tempData,onUpdate,token}){
     if(!window.confirm(t.confirmExport))return;
     try{
       const d=await apiFetch("/api/records/export",{method:"POST",body:JSON.stringify({project_id:projId,category:folder,records:items.map(d=>d.ai_result)})},token);
-      const updated=tempData.map(td=>items.find(i=>i.id===td.id)?{...td,exported:true,drive_link:d.drive_link}:td);
+      // base64からExcelファイルをダウンロード
+      const binary=atob(d.excel_b64);
+      const bytes=new Uint8Array(binary.length);
+      for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+      const blob=new Blob([bytes],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");
+      a.href=url; a.download=d.filename; a.click();
+      URL.revokeObjectURL(url);
+      // エクスポート済みに更新
+      const updated=tempData.map(td=>items.find(i=>i.id===td.id)?{...td,exported:true}:td);
       onUpdate(updated);
-      if(d.drive_link){
-        setExportMsg(`✅ Google Driveに保存しました。`);
-        window.open(d.drive_link,"_blank");
-      }else{
-        setExportMsg(t.exportSuccess);
-      }
+      setExportMsg("✅ Excelをダウンロードしました："+d.filename);
       setTimeout(()=>setExportMsg(""),5000);
     }catch(e){alert("エクスポートに失敗しました："+e.message);}
   };
