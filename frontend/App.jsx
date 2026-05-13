@@ -162,6 +162,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
   const [selId,setSelId]=useState("");
   const [newName,setNewName]=useState(""); const [newStart,setNewStart]=useState("");
   const [newPerson,setNewPerson]=useState(""); const [newNum,setNewNum]=useState("");
+  const [newLocation,setNewLocation]=useState(""); const [newContract,setNewContract]=useState("");
   const [inputMethod,setMethod]=useState("");
   const [file,setFile]=useState(null); const [preview,setPreview]=useState("");
   const [aiResult,setAiResult]=useState(null);
@@ -176,6 +177,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
 
   const reset=()=>{
     setStep(1);setSelId("");setNewName("");setNewStart("");setNewPerson("");setNewNum("");
+    setNewLocation("");setNewContract("");
     setMethod("");setFile(null);setPreview("");setAiResult(null);setMDate("");setMAmount("");
     setMD("");setMSupplier("");setMItems([{name:"",qty:"",unit:"",unitPrice:"",amount:""}]);setMTotal("");setMMemo("");
     setError("");setSave("");
@@ -194,7 +196,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
 
   const ensureProject=async()=>{
     if(selId)return selId;
-    const d=await apiFetch("/api/projects",{method:"POST",body:JSON.stringify({name:newName,num:newNum,start:newStart,person:newPerson})},token);
+    const d=await apiFetch("/api/projects",{method:"POST",body:JSON.stringify({name:newName,num:newNum,start:newStart,person:newPerson,location:newLocation,contract_amount:newContract})},token);
     await onRefresh();return d.project.id;
   };
 
