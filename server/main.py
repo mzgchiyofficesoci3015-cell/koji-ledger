@@ -175,6 +175,7 @@ async def create_project(request: Request, user_id: str = Depends(verify_token))
         "contract_amount":     body.get("contract_amount", ""),
         "contract_amount_ex":  body.get("contract_amount_ex", ""),
         "contract_amount_tax": body.get("contract_amount_tax", ""),
+        "company":             body.get("company", ""),
         "orderer":             body.get("orderer", ""),           # 注文者
         "jv_type":         body.get("jv_type", "元請"),       # 元請/下請
         "engineer_name":   body.get("engineer_name", ""),     # 配置技術者氏名
@@ -213,7 +214,7 @@ async def update_project(project_id: str, request: Request, user_id: str = Depen
         if p["id"] == project_id and p.get("owner") == user_id:
             updatable = ["orderer","jv_type","engineer_name","engineer_chief","engineer_super",
                          "has_pc","has_surface","has_steel","location","contract_amount",
-                         "contract_amount_ex","contract_amount_tax","person","num","name","start"]
+                         "contract_amount_ex","contract_amount_tax","company","person","num","name","start"]
             for key in updatable:
                 if key in body:
                     p[key] = body[key]
@@ -479,6 +480,7 @@ async def read_temp_record(request: Request, user_id: str = Depends(verify_token
                 "contract_amount":     body.get("project_contract", ""),
                 "contract_amount_ex":  body.get("project_contract_ex", ""),
                 "contract_amount_tax": body.get("project_contract_tax", ""),
+                "company":             body.get("project_company", ""),
                 "done": False, "owner": user_id
             }
             data["projects"].append(project)
@@ -834,14 +836,17 @@ def _build_sheet1(ws, project):
         amt = int(str(project.get("contract_amount","0")).replace(",","").replace("円",""))
     except:
         amt = 0
+    # 消費税を除く額・消費税額：入力値があればそれを使用、なければ自動計算
     try:
-        amt_ex = int(str(project.get("contract_amount_ex","0")).replace(",","").replace("円",""))
+        amt_ex_raw = project.get("contract_amount_ex","")
+        amt_ex = int(str(amt_ex_raw).replace(",","").replace("円","")) if amt_ex_raw else (amt - round(amt * 10 / 110))
     except:
-        amt_ex = 0
+        amt_ex = amt - round(amt * 10 / 110)
     try:
-        tax = int(str(project.get("contract_amount_tax","0")).replace(",","").replace("円",""))
+        tax_raw = project.get("contract_amount_tax","")
+        tax = int(str(tax_raw).replace(",","").replace("円","")) if tax_raw else round(amt * 10 / 110)
     except:
-        tax = 0
+        tax = round(amt * 10 / 110)
 
     # 請負金額（税込）
     m(bot+2,12,bot+2,13)

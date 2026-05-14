@@ -165,6 +165,82 @@ export default function App(){
   );
 }
 
+// =========================================================
+// プルダウン候補付き入力コンポーネント
+// =========================================================
+function SuggestInput({label, value, onChange, placeholder, storageKey, style={}}){
+  const [suggestions, setSuggestions] = useState([]);
+  const [showList, setShowList] = useState(false);
+
+  useEffect(()=>{
+    try{
+      const saved = JSON.parse(localStorage.getItem(storageKey)||"[]");
+      setSuggestions(saved);
+    }catch{}
+  },[storageKey]);
+
+  const saveValue = (val) => {
+    if(!val) return;
+    try{
+      const saved = JSON.parse(localStorage.getItem(storageKey)||"[]");
+      if(!saved.includes(val)){
+        const next = [val, ...saved].slice(0,20);
+        localStorage.setItem(storageKey, JSON.stringify(next));
+        setSuggestions(next);
+      }
+    }catch{}
+  };
+
+  const removeItem = (item, e) => {
+    e.stopPropagation();
+    const next = suggestions.filter(s=>s!==item);
+    setSuggestions(next);
+    localStorage.setItem(storageKey, JSON.stringify(next));
+  };
+
+  const handleBlur = () => {
+    setTimeout(()=>setShowList(false), 150);
+    if(value) saveValue(value);
+  };
+
+  const filtered = suggestions.filter(s=>
+    !value || s.toLowerCase().includes(value.toLowerCase())
+  );
+
+  return(
+    <div style={{position:"relative",...style}}>
+      <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>{label}</label>
+      <input
+        style={{width:"100%",padding:"11px 13px",borderRadius:10,border:"1.5px solid #E8E8E8",
+          fontSize:15,outline:"none",boxSizing:"border-box",fontFamily:"inherit",background:"#FAFAFA"}}
+        value={value}
+        placeholder={placeholder}
+        onChange={e=>onChange(e.target.value)}
+        onFocus={()=>setShowList(true)}
+        onBlur={handleBlur}
+      />
+      {showList && filtered.length>0 && (
+        <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#fff",
+          border:"1.5px solid #E8E8E8",borderRadius:10,boxShadow:"0 4px 16px rgba(0,0,0,0.1)",
+          zIndex:50,maxHeight:200,overflowY:"auto",marginTop:2}}>
+          {filtered.map((item,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",padding:"9px 12px",
+              borderBottom:"0.5px solid #F0F0F0",cursor:"pointer",fontSize:14}}
+              onMouseDown={()=>{onChange(item);setShowList(false);}}>
+              <span style={{flex:1}}>{item}</span>
+              <button
+                style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",
+                  fontSize:14,padding:"0 4px",lineHeight:1}}
+                onMouseDown={e=>removeItem(item,e)}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function AddPage({t,projects,token,onRefresh,onSaveTemp}){
   const active=projects.filter(p=>!p.done);
   const [step,setStep]=useState(1);
@@ -175,6 +251,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
   const [newOrderer,setNewOrderer]=useState(""); const [newJvType,setNewJvType]=useState("元請");
   const [newEngineer,setNewEngineer]=useState("");
   const [newContractEx,setNewContractEx]=useState(""); const [newContractTax,setNewContractTax]=useState("");
+  const [newCompany,setNewCompany]=useState(()=>localStorage.getItem("koji_company")||"");
   const [inputMethod,setMethod]=useState("");
   const [file,setFile]=useState(null); const [preview,setPreview]=useState("");
   const [aiResult,setAiResult]=useState(null);
@@ -195,9 +272,21 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
     setError("");setSave("");
   };
 
-  const goStep2=()=>{
-    if(!selId&&(!newName||!newStart||!newContract)){setError(t.requiredError);return;}
-    setError("");setStep(2);
+  const goStep2=async()=>{
+    if(!newName||!newStart||!newContract){setError(t.requiredError);return;}
+    setError("");
+    // 既存工事の場合は変更をサーバーに保存
+    if(selId){
+      try{
+        await apiFetch(`/api/projects/${selId}`,{method:"PATCH",body:JSON.stringify({
+          name:newName,num:newNum,start:newStart,person:newPerson,location:newLocation,
+          contract_amount:newContract,contract_amount_ex:newContractEx,contract_amount_tax:newContractTax,
+          orderer:newOrderer,jv_type:newJvType,engineer_name:newEngineer,company:newCompany
+        })},token);
+        await onRefresh();
+      }catch(e){setError(e.message);return;}
+    }
+    setStep(2);
   };
 
   const onFile=e=>{
@@ -208,7 +297,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
 
   const ensureProject=async()=>{
     if(selId)return selId;
-    const d=await apiFetch("/api/projects",{method:"POST",body:JSON.stringify({name:newName,num:newNum,start:newStart,person:newPerson,location:newLocation,contract_amount:newContract,contract_amount_ex:newContractEx,contract_amount_tax:newContractTax,orderer:newOrderer,jv_type:newJvType,engineer_name:newEngineer})},token);
+    const d=await apiFetch("/api/projects",{method:"POST",body:JSON.stringify({name:newName,num:newNum,start:newStart,person:newPerson,location:newLocation,contract_amount:newContract,contract_amount_ex:newContractEx,contract_amount_tax:newContractTax,orderer:newOrderer,jv_type:newJvType,engineer_name:newEngineer,company:newCompany})},token);
     await onRefresh();return d.project.id;
   };
 
@@ -220,7 +309,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
       const mediaType = file.type || "image/jpeg";
       const payload=selId
         ?{project_id:selId,image_b64:b64,media_type:mediaType}
-        :{project_name:newName,project_num:newNum,project_start:newStart,project_person:newPerson,project_location:newLocation,project_contract:newContract,project_contract_ex:newContractEx,project_contract_tax:newContractTax,project_orderer:newOrderer,project_jv_type:newJvType,project_engineer:newEngineer,image_b64:b64,media_type:mediaType};
+        :{project_name:newName,project_num:newNum,project_start:newStart,project_person:newPerson,project_location:newLocation,project_contract:newContract,project_contract_ex:newContractEx,project_contract_tax:newContractTax,project_orderer:newOrderer,project_jv_type:newJvType,project_engineer:newEngineer,project_company:newCompany,image_b64:b64,media_type:mediaType};
 
       // エラー詳細を取得するためapiFetchを直接使わず自前でfetch
       const headers={"Content-Type":"application/json",Authorization:`Bearer ${token}`};
@@ -280,34 +369,63 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
           <p style={{fontSize:15,fontWeight:700,margin:"0 0 16px"}}>STEP 1 ─ {t.step1Title}</p>
           {active.length>0&&(<>
             <label style={css.label}>{t.existingProject}</label>
-            <select style={css.select} value={selId} onChange={e=>{setSelId(e.target.value);if(e.target.value){setNewName("");setNewStart("");}}}>
+            <select style={css.select} value={selId} onChange={e=>{
+              const pid=e.target.value;
+              setSelId(pid);
+              if(pid){
+                const p=active.find(x=>x.id===pid);
+                if(p){
+                  setNewName(p.name||""); setNewStart(p.start||""); setNewNum(p.num||"");
+                  setNewPerson(p.person||""); setNewLocation(p.location||"");
+                  setNewContract(p.contract_amount||""); setNewContractEx(p.contract_amount_ex||"");
+                  setNewContractTax(p.contract_amount_tax||""); setNewOrderer(p.orderer||"");
+                  setNewJvType(p.jv_type||"元請"); setNewEngineer(p.engineer_name||"");
+                  setNewCompany(p.company||"");
+                }
+              }else{
+                setNewName("");setNewStart("");setNewNum("");setNewPerson("");setNewLocation("");
+                setNewContract("");setNewContractEx("");setNewContractTax("");setNewOrderer("");
+                setNewJvType("元請");setNewEngineer("");setNewCompany("");
+              }
+            }}>
               <option value="">{t.selectPlaceholder}</option>
               {active.map(p=><option key={p.id} value={p.id}>{p.name}{p.num?`（${p.num}）`:""}</option>)}
             </select>
+            {selId&&<p style={{fontSize:11,color:"#1565C0",margin:"4px 0 0",padding:"4px 8px",background:"#E3F2FD",borderRadius:6}}>✏️ 下の項目を編集すると工事情報が更新されます</p>}
             <div style={css.divider}><div style={css.divLine}/><span>{t.orNewProject}</span><div style={css.divLine}/></div>
           </>)}
-          <div style={{opacity:selId?.3:1,pointerEvents:selId?"none":"auto"}}>
+          <div>
             <div style={{marginBottom:12}}><label style={css.label}>{t.projectNameRequired}</label><input style={css.input} value={newName} placeholder="例：田中邸 外壁塗装" onChange={e=>{setNewName(e.target.value);setSelId("");}}/></div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
               <div><label style={css.label}>{t.startDate}</label><input style={css.input} type="date" value={newStart} onChange={e=>{setNewStart(e.target.value);setSelId("");}}/></div>
               <div><label style={css.label}>{t.projectNum}</label><input style={css.input} value={newNum} placeholder="例：2024-001" onChange={e=>setNewNum(e.target.value)}/></div>
             </div>
-            <div style={{marginBottom:12}}><label style={css.label}>{t.person}</label><input style={css.input} value={newPerson} placeholder="例：山田" onChange={e=>setNewPerson(e.target.value)}/></div>
+            <SuggestInput label={t.person||"記載者（任意）"} value={newPerson} onChange={setNewPerson} placeholder="例：日本太郎" storageKey="koji_persons" style={{marginBottom:12}}/>
             <div style={{marginBottom:12}}><label style={css.label}>{t.location||"工事場所（任意）"}</label><input style={css.input} value={newLocation} placeholder="例：○○市△△町1-2-3" onChange={e=>setNewLocation(e.target.value)}/></div>
-            <div style={{marginBottom:12}}><label style={css.label}>{"請負金額・税込（必須）"}</label><input style={css.input} value={newContract} placeholder="例：1650000" onChange={e=>setNewContract(e.target.value)}/></div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
-              <div><label style={css.label}>{"消費税を除く額（任意）"}</label><input style={css.input} value={newContractEx} placeholder="例：1500000" onChange={e=>setNewContractEx(e.target.value)}/></div>
-              <div><label style={css.label}>{"消費税額（任意）"}</label><input style={css.input} value={newContractTax} placeholder="例：150000" onChange={e=>setNewContractTax(e.target.value)}/></div>
-            </div>
-            <div style={{marginBottom:12}}><label style={css.label}>{t.orderer||"注文者（任意）"}</label><input style={css.input} value={newOrderer} placeholder="例：本巣市長 藤原勉" onChange={e=>setNewOrderer(e.target.value)}/></div>
+            <div style={{marginBottom:6}}><label style={css.label}>{"請負金額・税込（必須）"}</label><input style={css.input} value={newContract} placeholder="例：1650000" onChange={e=>setNewContract(e.target.value)}/></div>
+            {newContract&&!isNaN(Number(newContract))&&Number(newContract)>0&&(()=>{
+              const total=Number(newContract);
+              const tax=Math.round(total*10/110);
+              const ex=total-tax;
+              return(
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12,background:"#F8F8F6",borderRadius:10,padding:"8px 12px"}}>
+                  <div><span style={{fontSize:11,color:"#888"}}>消費税を除く額（自動）</span><div style={{fontSize:14,fontWeight:600,color:"#1A1A1A"}}>¥{ex.toLocaleString()}</div></div>
+                  <div><span style={{fontSize:11,color:"#888"}}>消費税額（10%）</span><div style={{fontSize:14,fontWeight:600,color:"#E65100"}}>¥{tax.toLocaleString()}</div></div>
+                </div>
+              );
+            })()}
+            {!(newContract&&!isNaN(Number(newContract))&&Number(newContract)>0)&&<div style={{marginBottom:12}}/>}
+            <div style={{marginBottom:12}}><label style={css.label}>{t.orderer||"注文者（任意）"}</label><input style={css.input} value={newOrderer} placeholder="例：日本 太郎" onChange={e=>setNewOrderer(e.target.value)}/></div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
               <div><label style={css.label}>{t.jvType||"元請/下請"}</label>
                 <select style={css.select} value={newJvType} onChange={e=>setNewJvType(e.target.value)}>
                   <option value="元請">元請</option><option value="下請">下請</option>
                 </select>
               </div>
-              <div><label style={css.label}>{t.engineerName||"配置技術者氏名（任意）"}</label><input style={css.input} value={newEngineer} placeholder="例：山田 太郎" onChange={e=>setNewEngineer(e.target.value)}/></div>
+              <SuggestInput label={t.engineerName||"配置技術者氏名（任意）"} value={newEngineer} onChange={setNewEngineer} placeholder="例：日本太郎" storageKey="koji_engineers"/>
             </div>
+            <div style={{marginBottom:12}}><label style={css.label}>{"会社名（任意）"}</label>
+              <input style={css.input} value={newCompany} placeholder="例：工事台帳会社" onChange={e=>{setNewCompany(e.target.value);localStorage.setItem("koji_company",e.target.value);}}/></div>
           </div>
           {error&&<div style={css.errorBox}>{error}</div>}
           <button style={{...css.btnPrimary,marginTop:18}} onClick={goStep2}>{t.next} →</button>
@@ -725,7 +843,7 @@ function ProjectList({t,projects,token,onRefresh}){
       {showForm&&(
         <div style={css.card}>
           <p style={{fontSize:14,fontWeight:700,margin:"0 0 14px"}}>{t.newProject}</p>
-          {[[t.projectNameRequired,name,setName,"text","田中邸 外壁塗装"],[t.startDate,start,setStart,"date",""],[t.projectNum,num,setNum,"text","2024-001"],[t.person,person,setPerson,"text","山田"]].map(([label,val,setter,type,ph])=>(
+          {[[t.projectNameRequired,name,setName,"text","田中邸 外壁塗装"],[t.startDate,start,setStart,"date",""],[t.projectNum,num,setNum,"text","2024-001"],[t.person,person,setPerson,"text","日本太郎"]].map(([label,val,setter,type,ph])=>(
             <div key={label} style={{marginBottom:12}}><label style={css.label}>{label}</label><input style={css.input} type={type} value={val} placeholder={ph} onChange={e=>setter(e.target.value)}/></div>
           ))}
           <div style={{marginBottom:12}}><label style={css.label}>{"工事場所（任意）"}</label><input style={css.input} value={location2} placeholder="例：○○市△△町1-2-3" onChange={e=>setLocation2(e.target.value)}/></div>
@@ -773,7 +891,7 @@ function ProjectList({t,projects,token,onRefresh}){
 // =========================================================
 function CareerPage({t,projects,token,onRefresh}){
   const [selYear,setSelYear]=useState(new Date().getFullYear().toString());
-  const [company,setCompany]=useState("");
+  const [company,setCompany]=useState(()=>localStorage.getItem("koji_company")||"");
   const [permit,setPermit]=useState("");
   const [workType,setWorkType]=useState("大工");
   const [editId,setEditId]=useState(null);
@@ -842,10 +960,10 @@ function CareerPage({t,projects,token,onRefresh}){
           <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto"}}>
             <p style={{fontWeight:700,fontSize:15,margin:"0 0 16px"}}>工事経歴情報を編集</p>
             {[
-              ["注文者",        "orderer",        "text",   "例：本巣市長 藤原勉"],
+              ["注文者",        "orderer",        "text",   "例：日本 太郎"],
               ["工事場所",       "location",       "text",   "例：岐阜県本巣市"],
               ["請負金額（円）", "contract_amount","text",   "例：1500000"],
-              ["配置技術者氏名", "engineer_name",  "text",   "例：溝口 貴敏"],
+              ["配置技術者氏名", "engineer_name",  "text",   "例：日本太郎"],
             ].map(([label,key,type,ph])=>(
               <div key={key} style={{marginBottom:12}}>
                 <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>{label}</label>
@@ -905,14 +1023,14 @@ function CareerPage({t,projects,token,onRefresh}){
             </select>
           </div>
           <div>
-            <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>建設工事の種類</label>
-            <input style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E8E8E8",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}} value={workType} onChange={e=>setWorkType(e.target.value)} placeholder="例：大工"/>
+            <SuggestInput label="建設工事の種類" value={workType} onChange={v=>{setWorkType(v);}} placeholder="例：大工" storageKey="koji_worktypes"/>
           </div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
           <div>
             <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>申請者名</label>
-            <input style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E8E8E8",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}} value={company} onChange={e=>setCompany(e.target.value)} placeholder="例：山田建設"/>
+            <input style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E8E8E8",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}} value={company} onChange={e=>setCompany(e.target.value)} placeholder="例：工事台帳会社"/>
+            <p style={{fontSize:10,color:"#aaa",margin:"3px 0 0"}}>※STEP1の会社名を入力すると自動で反映されます</p>
           </div>
           <div>
             <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>許可番号</label>
