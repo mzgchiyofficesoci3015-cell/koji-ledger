@@ -19,14 +19,14 @@ const T = {
     date:"日付", amount:"合計金額", supplier:"仕入先・外注先",
     itemName:"品名・作業内容", qty:"数量", unit:"単位", unitPrice:"単価",
     manualInput:"読み取れなかった場合は手動で入力", amountPlaceholder:"例：15000",
-    saveToTemp:"一時保管に保存", saving:"保存中...", saved:"✅ 一時保管に保存しました",
+    saveToTemp:"工事原価明細書に保存", saving:"保存中...", saved:"✅ 工事原価明細書に保存しました",
     retry:"やり直す", addMore:"続けて追加する",
     high:"高", mid:"中", low:"低",
     confirmComplete:"完了にしますか？完了後は選択肢から非表示になります。",
     noProjects:"登録された工事はありません",
     newProject:"新規工事登録", complete:"完了にする", active:"進行中", done:"完了",
     register_project:"工事を登録",
-    nav:{ add:"追加", list:"一覧", temp:"一時保管", career:"工事経歴" },
+    nav:{ add:"追加", list:"一覧", temp:"原価明細書", career:"工事経歴" },
     requiredError:"工事名・開始日・請負金額は必須です",
     location:"工事場所（任意）",
     contractAmount:"請負金額（必須）",
@@ -39,7 +39,7 @@ const T = {
     addItem:"+ 明細を追加", removeItem:"削除",
     cats:{ 材料費:"材料費", 人件費:"人件費", 外注費:"外注費", 経費:"経費" },
     catDesc:{ 材料費:"セメント・木材・金物など", 人件費:"作業員・職人の賃金", 外注費:"下請け・専門業者", 経費:"交通費・消耗品など" },
-    tempTitle:"一時保管", noTempData:"一時保管データはありません",
+    tempTitle:"工事原価明細書", noTempData:"工事原価明細書データはありません",
     selectProject:"工事を選択", allProjects:"すべての工事",
     viewList:"リスト", viewGrid:"グリッド",
     exportBtn:"Excelにエクスポート", exportDone:"エクスポート済み",
@@ -544,7 +544,9 @@ function TempPage({t,projects,tempData,onUpdate,token}){
     if(!window.confirm(`${items.length}件のデータをExcelにエクスポートします。よろしいですか？`))return;
     try{
       const records=items.map(d=>({category:d.folder,ai_result:d.ai_result,record_id:d.id}));
-      const d=await apiFetch("/api/records/export",{method:"POST",body:JSON.stringify({project_id:projId,records})},token);
+      const res=await fetch(`${API}/api/records/export`,{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${token}`},body:JSON.stringify({project_id:projId,records})});
+      if(!res.ok){const err=await res.json().catch(()=>({}));throw new Error(err.detail||`HTTP ${res.status}`);}
+      const d=await res.json();
       const binary=atob(d.excel_b64);
       const bytes=new Uint8Array(binary.length);
       for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
@@ -561,7 +563,12 @@ function TempPage({t,projects,tempData,onUpdate,token}){
       const msg = `✅ Excelをダウンロードしました（${parts.join("・")||"変更なし"}）`;
       setExportMsg(msg);
       setTimeout(()=>setExportMsg(""),5000);
-    }catch(e){alert("エクスポートに失敗しました："+e.message);}
+    }catch(e){
+      console.error(e);
+      alert("エクスポートに失敗しました："+e.message+"
+
+詳細はブラウザのコンソールを確認してください");
+    }
   };
 
   // Excelキャッシュリセット
@@ -579,7 +586,7 @@ function TempPage({t,projects,tempData,onUpdate,token}){
   // 工事単位で一括削除
   const deleteProject=async(projId,projName)=>{
     const items=tempData.filter(d=>d.project_id===projId);
-    if(!window.confirm(`「${projName}」の一時保管データ${items.length}件を全て削除しますか？`))return;
+    if(!window.confirm(`「${projName}」の工事原価明細書データ${items.length}件を全て削除しますか？`))return;
     onUpdate(tempData.filter(d=>d.project_id!==projId));
   };
 
