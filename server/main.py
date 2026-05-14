@@ -37,7 +37,7 @@ app.add_middleware(
 CLAUDE_KEY  = os.environ["ANTHROPIC_API_KEY"]
 JWT_SECRET  = os.environ.get("JWT_SECRET", secrets.token_hex(32))
 JWT_EXPIRE  = 60 * 24 * 7  # 7日間（分）
-DATA_FILE   = Path("data/store.json")
+DATA_FILE   = Path("/data/store.json")  # Railway Volume永続化
 DATA_FILE.parent.mkdir(exist_ok=True)
 
 CATEGORIES  = ["材料費", "人件費", "外注費", "経費"]
