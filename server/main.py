@@ -636,14 +636,9 @@ def build_excel(project: dict, category: str, records: list) -> bytes:
 
 @app.post("/api/records/export")
 async def export_records(request: Request, user_id: str = Depends(verify_token)):
-    """
-    工事単位でまとめてエクスポート。
-    同じ工事の既存Excelがある場合は追記する。
-    records は {category: str, ai_result: dict} のリスト。
-    """
     body       = await request.json()
     project_id = body.get("project_id")
-    records    = body.get("records", [])  # [{category, ai_result}, ...]
+    records    = body.get("records", [])
 
     if not project_id or not records:
         raise HTTPException(400, "project_id・records は必須です")
@@ -653,65 +648,42 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
     if not project:
         raise HTTPException(404, "工事が見つかりません")
 
-    # 費目ごとにグループ化
     by_cat = {cat: [] for cat in CATEGORIES}
     for r in records:
         cat = r.get("category")
         if cat in CATEGORIES:
             by_cat[cat].append(r.get("ai_result", {}))
 
-    # 既存Excelがあれば読み込み、なければ新規作成
     safe_name = project["name"].replace("/", "／")
     filename  = f"工事台帳_{safe_name}.xlsx"
 
-    # store.jsonにExcelデータをキャッシュ（追記対応）
     if "excel_cache" not in data:
         data["excel_cache"] = {}
-
     cache_key = f"{user_id}_{project_id}"
 
     if cache_key in data["excel_cache"]:
-        # 既存データに追記
-        existing_b64 = data["excel_cache"][cache_key]
-        wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(existing_b64)))
+        wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(data["excel_cache"][cache_key])))
     else:
-        # 新規作成
         wb = openpyxl.Workbook()
         wb.remove(wb.active)
-        # 集計シート
-        ws_sum = wb.create_sheet("集計", 0)
-        ws_sum.merge_cells("A1:D1")
-        ws_sum["A1"] = f"工事台帳　{project['name']}"
-        ws_sum["A1"].font = Font(name="游ゴシック", bold=True, size=14)
-        ws_sum["A2"] = f"工事番号：{project.get('num','')}　開始日：{project.get('start','')}"
-        ws_sum["A2"].font = Font(name="游ゴシック", size=10, color="666666")
-        ws_sum["A4"] = "費目"; ws_sum["B4"] = "合計金額（円）"
-        ws_sum["A4"].font = ws_sum["B4"].font = Font(bold=True)
-        for i, cat in enumerate(CATEGORIES, 5):
-            ws_sum.cell(row=i, column=1, value=cat)
-            ws_sum.cell(row=i, column=2, value=f"=SUMIF('{cat}'!B:B,A{i},'{cat}'!G:G)")
-            ws_sum.cell(row=i, column=2).number_format = "#,##0"
-        ws_sum.cell(row=9, column=1, value="合計").font = Font(bold=True)
-        ws_sum.cell(row=9, column=2, value="=SUM(B5:B8)").font = Font(bold=True)
-        ws_sum.cell(row=9, column=2).number_format = "#,##0"
-        ws_sum.column_dimensions["A"].width = 15
-        ws_sum.column_dimensions["B"].width = 18
-        # 費目シート作成
+        _build_sheet1(wb.create_sheet("工事台帳", 0), project)
+        _build_sheet2(wb.create_sheet("集計", 1), project)
         for cat in CATEGORIES:
             _setup_cat_sheet(wb.create_sheet(cat), project, cat)
 
-    # 各費目シートにデータ追記
     for cat, ai_list in by_cat.items():
         if not ai_list:
             continue
-        ws = wb[cat] if cat in wb.sheetnames else _setup_cat_sheet(wb.create_sheet(cat), project, cat)
+        if cat not in wb.sheetnames:
+            _setup_cat_sheet(wb.create_sheet(cat), project, cat)
+        ws = wb[cat]
         row = 4
         while ws.cell(row=row, column=1).value is not None:
             row += 1
         for ai in ai_list:
-            items = ai.get("明細", []) or [{"品名_作業内容": "", "数量": None, "単位": None, "単価": None, "金額": ai.get("合計金額", 0)}]
+            items = ai.get("明細", []) or [{"品名_作業内容":"","数量":None,"単位":None,"単価":None,"金額":ai.get("合計金額",0)}]
             for item in items:
-                row_data = [ai.get("日付",""), cat, item.get("品名_作業内容",""), item.get("数量"), item.get("単位"), item.get("単価"), item.get("金額") or 0, ai.get("仕入先_外注先",""), ai.get("備考","")]
+                row_data = [ai.get("日付",""), cat, item.get("品名_作業内容",""), item.get("数量"), item.get("単位"), item.get("単価"), item.get("金額") or 0, ai.get("仕入先_外注先",""), ""]
                 for col, val in enumerate(row_data, 1):
                     c = ws.cell(row=row, column=col, value=val)
                     c.font = Font(name="游ゴシック", size=10)
@@ -720,39 +692,323 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
                         c.number_format = "#,##0"
                 row += 1
 
-    # Excelをbase64に変換してキャッシュに保存
     buf = io.BytesIO()
     wb.save(buf)
     excel_bytes = buf.getvalue()
     data["excel_cache"][cache_key] = base64.b64encode(excel_bytes).decode()
     save(data)
-
     return {"ok": True, "excel_b64": data["excel_cache"][cache_key], "filename": filename}
 
 
+def _build_sheet1(ws, project):
+    """シート1：工事台帳（テンプレートフォーマット）A4縦"""
+    from openpyxl.styles import Alignment as Aln
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.orientation = "portrait"
+    ws.page_setup.fitToPage = True
+
+    def s(row, col, val="", bold=False, size=9, h="left", v="center", bg=None, wrap=False, border=True):
+        c = ws.cell(row=row, column=col, value=val)
+        c.font = Font(name="游ゴシック", size=size, bold=bold)
+        c.alignment = Aln(horizontal=h, vertical=v, wrap_text=wrap)
+        if bg:
+            c.fill = PatternFill("solid", fgColor=bg)
+        if border:
+            sd = Side(style="thin")
+            c.border = Border(left=sd, right=sd, top=sd, bottom=sd)
+        return c
+
+    def m(r1,c1,r2,c2):
+        ws.merge_cells(start_row=r1,start_column=c1,end_row=r2,end_column=c2)
+
+    HDR = "DDDDDD"
+    col_w = [5,5,5,5,14,5,12,5,5,5,12,5,12,5]
+    for i,w in enumerate(col_w,1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    for r,h in [(1,16),(2,18),(3,18),(4,18),(5,18),(6,18),(7,22),(8,32),(9,18),(10,18),(11,18),(12,18),(13,18)]:
+        ws.row_dimensions[r].height = h
+
+    # タイトル
+    m(1,1,1,14); s(1,1,"工　事　台　帳",bold=True,size=14,h="center",border=False)
+
+    # 工事番号・工事名・工事場所
+    m(2,1,2,2); s(2,1,"工事
+番号",h="center",bg=HDR,wrap=True,size=7)
+    m(2,3,2,5); s(2,3,project.get("num",""),size=9)
+    m(2,6,3,6); s(2,6,"工
+事
+名",h="center",bg=HDR,wrap=True,size=7)
+    m(2,7,2,10); s(2,7,project.get("name",""),bold=True,size=10)
+    m(2,11,2,11); s(2,11,"工事
+場所",h="center",bg=HDR,wrap=True,size=7)
+    m(2,12,2,14); s(2,12,project.get("location",""),size=9)
+
+    m(3,1,3,2); s(3,1,"",bg=HDR)
+    m(3,3,3,5); s(3,3,"")
+    m(3,7,3,10); s(3,7,"")
+    m(3,12,3,13); s(3,12,"TEL")
+    s(3,14,"",bg=HDR,size=7)
+
+    # 発注者
+    m(4,1,6,2); s(4,1,"発
+注
+者",h="center",bg=HDR,wrap=True,size=8)
+    m(4,3,4,4); s(4,3,"名称",h="center",bg=HDR,size=8)
+    m(4,5,4,9); s(4,5,project.get("orderer",""),size=9)
+    s(4,10,"担当者",h="center",bg=HDR,size=7)
+    m(4,11,4,14); s(4,11,project.get("person",""),size=9)
+
+    m(5,3,5,4); s(5,3,"住所",h="center",bg=HDR,size=8)
+    m(5,5,5,14); s(5,5,"",size=9)
+
+    m(6,3,6,4); s(6,3,"TEL",h="center",bg=HDR,size=8)
+    m(6,5,6,8); s(6,5,"",size=9)
+    s(6,9,"確認番号",h="center",bg=HDR,size=7)
+    m(6,10,6,11); s(6,10,f"第　　号",size=8)
+    s(6,12,"確認
+年月日",h="center",bg=HDR,size=7,wrap=True)
+    m(6,13,6,14); s(6,13,"",size=9)
+
+    # 工期
+    m(7,1,7,2); s(7,1,"契約
+年月日",h="center",bg=HDR,wrap=True,size=7)
+    m(7,3,7,4); s(7,3,project.get("start",""),size=8)
+    m(7,5,7,5); s(7,5,"着工
+年月日",h="center",bg=HDR,wrap=True,size=7)
+    s(7,6,"予定
+実行",h="center",bg=HDR,wrap=True,size=7)
+    m(7,7,7,7); s(7,7,project.get("start",""),size=8)
+    m(7,8,7,8); s(7,8,"竣工
+年月日",h="center",bg=HDR,wrap=True,size=7)
+    s(7,9,"予定
+実行",h="center",bg=HDR,wrap=True,size=7)
+    m(7,10,7,10); s(7,10,project.get("completion_date",""),size=8)
+    s(7,11,"引渡
+年月日",h="center",bg=HDR,wrap=True,size=7)
+    s(7,12,"予定
+実行",h="center",bg=HDR,wrap=True,size=7)
+    m(7,13,7,14); s(7,13,project.get("completion_date",""),size=8)
+
+    # 工事概要
+    m(8,1,8,2); s(8,1,"工事
+概要",h="center",bg=HDR,wrap=True,size=8)
+    m(8,3,8,14); s(8,3,"",wrap=True)
+
+    # 請負金額セクション
+    m(9,1,12,2); s(9,1,"請
+負
+金
+額",h="center",bg=HDR,wrap=True,size=8)
+    for col,label in [(3,"月/日"),(4,"摘　要"),(5,""),(6,"金　額"),(7,"月/日"),(8,"摘　要"),(9,""),(10,"金　額"),(11,"月/日"),(12,"摘　要"),(13,""),(14,"金　額")]:
+        s(9,col,label,h="center",bg=HDR,size=8)
+    for r in range(10,13):
+        ws.row_dimensions[r].height = 16
+        for c in range(3,15):
+            s(r,c,"",size=9)
+
+    # 支払条件
+    m(13,1,13,2); s(13,1,"支払
+条件",h="center",bg=HDR,wrap=True,size=8)
+    m(13,3,13,14); s(13,3,"",wrap=True)
+
+    # 請求・受入セクション
+    row = 14
+    s(row,1,"月/日",h="center",bg=HDR,size=8)
+    m(row,2,row,4); s(row,2,"請　　求",h="center",bg=HDR,size=8)
+    m(row,5,row,6); s(row,5,"金　額",h="center",bg=HDR,size=8)
+    s(row,7,"月/日",h="center",bg=HDR,size=8)
+    m(row,8,row,10); s(row,8,"受　　入",h="center",bg=HDR,size=8)
+    m(row,11,row,12); s(row,11,"金　額",h="center",bg=HDR,size=8)
+    m(row,13,row,13); s(row,13,"未収入金額",h="center",bg=HDR,size=7)
+    s(row,14,"備考",h="center",bg=HDR,size=8)
+
+    for r in range(row+1, row+13):
+        ws.row_dimensions[r].height = 15
+        s(r,1,"／",h="center",size=9)
+        m(r,2,r,4); s(r,2,"",size=9)
+        m(r,5,r,6); s(r,5,"",size=9)
+        s(r,7,"／",h="center",size=9)
+        m(r,8,r,10); s(r,8,"",size=9)
+        m(r,11,r,12); s(r,11,"",size=9)
+        s(r,13,"",size=9)
+        s(r,14,"",size=9)
+
+    # 請負金額の内訳（下部）
+    bot = row + 13
+    for r in [bot,bot+1,bot+2,bot+3,bot+4]:
+        ws.row_dimensions[r].height = 16
+
+    m(bot,1,bot,4); s(bot,1,"労　働　保　険　番　号",h="center",bg=HDR,size=8)
+    m(bot,5,bot,14); s(bot,5,"請　負　金　額　の　内　訳",h="center",bg=HDR,size=8)
+
+    m(bot+1,1,bot+2,1); s(bot+1,1,"府県",h="center",bg=HDR,size=7)
+    m(bot+1,2,bot+2,2); s(bot+1,2,"所掌
+管轄",h="center",bg=HDR,wrap=True,size=7)
+    m(bot+1,3,bot+2,3); s(bot+1,3,"基幹
+番号",h="center",bg=HDR,wrap=True,size=7)
+    m(bot+1,4,bot+2,4); s(bot+1,4,"枝番号",h="center",bg=HDR,size=7,wrap=True)
+    m(bot+1,5,bot+2,6); s(bot+1,5,"請負代金の額",h="center",bg=HDR,size=7,wrap=True)
+    m(bot+1,7,bot+2,9); s(bot+1,7,"請負代金に
+加算する額",h="center",bg=HDR,size=7,wrap=True)
+    m(bot+1,10,bot+2,11); s(bot+1,10,"請負代金から
+控除する額",h="center",bg=HDR,size=7,wrap=True)
+    m(bot+1,12,bot+2,13); s(bot+1,12,"請負金額",h="center",bg=HDR,size=8,wrap=True)
+    m(bot+1,14,bot+2,14); s(bot+1,14,"労務
+費率",h="center",bg=HDR,wrap=True,size=7)
+
+    for c in [1,2,3,4]:
+        m(bot+3,c,bot+4,c); s(bot+3,c,"",size=9)
+    m(bot+3,5,bot+3,6); s(bot+3,5,"",size=9)
+    m(bot+3,7,bot+3,9); s(bot+3,7,"",size=9)
+    m(bot+3,10,bot+3,11); s(bot+3,10,"",size=9)
+
+    try:
+        amt = int(str(project.get("contract_amount","0")).replace(",","").replace("円",""))
+        tax = round(amt * 10 / 110)
+        amt_ex = amt - tax
+    except:
+        amt = 0; tax = 0; amt_ex = 0
+
+    m(bot+2,12,bot+2,13); s(bot+2,12,amt if amt else "",h="right",size=10,bold=True)
+    ws.cell(bot+2,12).number_format = "#,##0"
+    s(bot+3,12,"消費税を除く額",h="right",size=7,bg="FFF9C4")
+    m(bot+3,13,bot+3,13); s(bot+3,13,amt_ex if amt_ex else "",h="right",size=9)
+    ws.cell(bot+3,13).number_format = "#,##0"
+    s(bot+4,12,"消費税額",h="right",size=7,bg="FFF9C4")
+    m(bot+4,13,bot+4,13); s(bot+4,13,tax if tax else "",h="right",size=9)
+    ws.cell(bot+4,13).number_format = "#,##0"
+    m(bot+3,14,bot+4,14); s(bot+3,14,"",size=9)
+
+    ws.print_area = f"A1:N{bot+4}"
+
+
+def _build_sheet2(ws, project):
+    """シート2：集計シート（材料費・人件費・外注費・経費）A4縦"""
+    from openpyxl.styles import Alignment as Aln
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.orientation = "portrait"
+
+    HDR_BLUE = "1565C0"
+    CAT_C = {"材料費":"1565C0","人件費":"2E7D32","外注費":"6A1B9A","経費":"E65100"}
+    sd = Side(style="thin")
+    bdr = Border(left=sd,right=sd,top=sd,bottom=sd)
+
+    ws.column_dimensions["A"].width = 16
+    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["C"].width = 20
+    ws.row_dimensions[1].height = 30
+    ws.row_dimensions[2].height = 14
+
+    ws.merge_cells("A1:C1")
+    ws["A1"] = f"集　計　表　　{project['name']}"
+    ws["A1"].font = Font(name="游ゴシック", bold=True, size=13, color="FFFFFF")
+    ws["A1"].fill = PatternFill("solid", fgColor=HDR_BLUE)
+    ws["A1"].alignment = Aln(horizontal="center", vertical="center")
+    ws["A1"].border = bdr
+
+    ws["A2"] = f"工事番号：{project.get('num','')}　開始日：{project.get('start','')}　完成：{project.get('completion_date','')}"
+    ws["A2"].font = Font(name="游ゴシック", size=8, color="666666")
+    ws.merge_cells("A2:C2")
+
+    # ヘッダー
+    ws.row_dimensions[3].height = 18
+    for col,label in [(1,"費　目"),(2,"合計金額（円）"),(3,"備　考")]:
+        c = ws.cell(row=3,column=col,value=label)
+        c.font = Font(name="游ゴシック",bold=True,size=10,color="FFFFFF")
+        c.fill = PatternFill("solid",fgColor=HDR_BLUE)
+        c.alignment = Aln(horizontal="center",vertical="center")
+        c.border = bdr
+
+    # 費目行
+    row = 4
+    for cat in CATEGORIES:
+        ws.row_dimensions[row].height = 22
+        color = CAT_C.get(cat,"333333")
+        c1 = ws.cell(row=row,column=1,value=cat)
+        c1.font = Font(name="游ゴシック",bold=True,size=10,color="FFFFFF")
+        c1.fill = PatternFill("solid",fgColor=color)
+        c1.alignment = Aln(horizontal="center",vertical="center")
+        c1.border = bdr
+        # 費目シートが存在する場合のみSUMIF
+        c2 = ws.cell(row=row,column=2,value=f"=IFERROR(SUMPRODUCT(('{cat}'!B4:B2000="{cat}")*'{cat}'!G4:G2000),0)")
+        c2.font = Font(name="游ゴシック",size=10)
+        c2.number_format = "#,##0"
+        c2.alignment = Aln(horizontal="right",vertical="center")
+        c2.border = bdr
+        c3 = ws.cell(row=row,column=3,value="")
+        c3.border = bdr
+        row += 1
+
+    # 合計
+    ws.row_dimensions[row].height = 24
+    ct = ws.cell(row=row,column=1,value="合　計")
+    ct.font = Font(name="游ゴシック",bold=True,size=11,color="FFFFFF")
+    ct.fill = PatternFill("solid",fgColor="222222")
+    ct.alignment = Aln(horizontal="center",vertical="center")
+    ct.border = bdr
+    cv = ws.cell(row=row,column=2,value=f"=SUM(B4:B{row-1})")
+    cv.font = Font(name="游ゴシック",bold=True,size=11)
+    cv.number_format = "#,##0"
+    cv.alignment = Aln(horizontal="right",vertical="center")
+    cv.border = bdr
+    c3 = ws.cell(row=row,column=3,value="")
+    c3.border = bdr
+
+    # 請負金額との対比
+    row += 2
+    ws.row_dimensions[row].height = 18
+    try:
+        amt = int(str(project.get("contract_amount","0")).replace(",","").replace("円",""))
+        tax = round(amt * 10 / 110)
+        amt_ex = amt - tax
+    except:
+        amt = 0; tax = 0; amt_ex = 0
+
+    for r_offset, label, val in [(0,"請負金額（税込）",amt),(1,"消費税を除く額",amt_ex),(2,"消費税額",tax)]:
+        ws.row_dimensions[row+r_offset].height = 18
+        lc = ws.cell(row=row+r_offset,column=1,value=label)
+        lc.font = Font(name="游ゴシック",size=9,color="555555")
+        lc.alignment = Aln(horizontal="right",vertical="center")
+        lc.border = bdr
+        lc.fill = PatternFill("solid",fgColor="FFF9C4")
+        vc = ws.cell(row=row+r_offset,column=2,value=val if val else "")
+        vc.font = Font(name="游ゴシック",size=9)
+        vc.number_format = "#,##0"
+        vc.alignment = Aln(horizontal="right",vertical="center")
+        vc.border = bdr
+        ec = ws.cell(row=row+r_offset,column=3,value="")
+        ec.border = bdr
+
+
 def _setup_cat_sheet(ws, project, cat):
-    """費目シートの初期設定"""
+    """費目シートの初期設定（A4縦）"""
+    from openpyxl.styles import Alignment as Aln
     color = CAT_COLORS.get(cat, "333333")
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.orientation = "portrait"
     ws.merge_cells("A1:I1")
     ws["A1"] = f"{project['name']}　{cat}台帳"
     ws["A1"].font      = Font(name="游ゴシック", bold=True, size=13, color="FFFFFF")
     ws["A1"].fill      = PatternFill("solid", fgColor=color)
-    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws["A1"].alignment = Aln(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 28
-    ws["A2"] = f"工事番号：{project.get('num','')}　開始日：{project.get('start','')}"
+    ws["A2"] = f"工事番号：{project.get('num','')}　担当：{project.get('person','')}　請負金額：{project.get('contract_amount','')}円　場所：{project.get('location','')}"
     ws["A2"].font = Font(name="游ゴシック", size=10, color="666666")
-    headers = ["日付","費目","品名・作業内容","数量","単位","単価","金額","仕入先・外注先","備考"]
+    ws.merge_cells("A2:I2")
+    headers = ["日付","費目","品名・作業内容","数量","単位","単価","金額","仕入先・外注先","備考（自由記載）"]
     for col, h in enumerate(headers, 1):
         c = ws.cell(row=3, column=col, value=h)
         c.font      = Font(name="游ゴシック", bold=True, size=10, color="FFFFFF")
         c.fill      = PatternFill("solid", fgColor=color)
-        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.alignment = Aln(horizontal="center", vertical="center")
         c.border    = _border()
     ws.row_dimensions[3].height = 22
     for i, w in enumerate([12, 10, 30, 8, 6, 10, 12, 20, 20], 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A4"
     return ws
+
+
 
 
 
