@@ -420,7 +420,7 @@ function TempPage({t,projects,tempData,onUpdate,token}){
     if(items.length===0){alert("エクスポートできるデータがありません。\n費目フォルダに仕分けされていないデータはエクスポートできません。");return;}
     if(!window.confirm(`${items.length}件のデータをExcelにエクスポートします。よろしいですか？`))return;
     try{
-      const records=items.map(d=>({category:d.folder,ai_result:d.ai_result}));
+      const records=items.map(d=>({category:d.folder,ai_result:d.ai_result,record_id:d.id}));
       const d=await apiFetch("/api/records/export",{method:"POST",body:JSON.stringify({project_id:projId,records})},token);
       const binary=atob(d.excel_b64);
       const bytes=new Uint8Array(binary.length);
@@ -432,9 +432,24 @@ function TempPage({t,projects,tempData,onUpdate,token}){
       URL.revokeObjectURL(url);
       const updated=tempData.map(td=>items.find(i=>i.id===td.id)?{...td,exported:true}:td);
       onUpdate(updated);
-      setExportMsg("✅ Excelをダウンロードしました："+d.filename);
+      const msg = d.skipped > 0
+        ? `✅ Excelをダウンロードしました（新規${d.added}件追記・重複${d.skipped}件スキップ）`
+        : `✅ Excelをダウンロードしました（${d.added}件追記）`;
+      setExportMsg(msg);
       setTimeout(()=>setExportMsg(""),5000);
     }catch(e){alert("エクスポートに失敗しました："+e.message);}
+  };
+
+  // Excelキャッシュリセット
+  const resetExportCache=async(projId)=>{
+    const projName=projList.find(x=>x.id===projId)?.name||projId;
+    if(!window.confirm(`「${projName}」のExcelキャッシュをリセットします。
+次回エクスポート時に新規ファイルが作成されます。よろしいですか？`))return;
+    try{
+      await apiFetch(`/api/records/export/${projId}`,{method:"DELETE"},token);
+      setExportMsg("✅ Excelキャッシュをリセットしました。次回エクスポートで新規作成されます。");
+      setTimeout(()=>setExportMsg(""),4000);
+    }catch(e){alert("リセットに失敗しました："+e.message);}
   };
 
   // 工事単位で一括削除
@@ -483,6 +498,7 @@ function TempPage({t,projects,tempData,onUpdate,token}){
             {selProj!=="all"&&(
               <>
                 <button style={{...css.btnSmall,background:C.ink,color:"#fff",fontSize:11}} onClick={()=>exportProject(selProj)}>⬇ 工事まとめてExcel</button>
+                <button style={{...css.btnSmall,color:"#888",borderColor:"#ccc",fontSize:11}} onClick={()=>resetExportCache(selProj)}>🔄 Excelリセット</button>
                 <button style={{...css.btnSmall,color:C.red,borderColor:C.red,fontSize:11}} onClick={()=>{const p=projList.find(x=>x.id===selProj);if(p)deleteProject(selProj,p.name);}}>🗑 工事一括削除</button>
               </>
             )}

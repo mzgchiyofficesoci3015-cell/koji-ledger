@@ -638,7 +638,7 @@ def build_excel(project: dict, category: str, records: list) -> bytes:
 async def export_records(request: Request, user_id: str = Depends(verify_token)):
     body       = await request.json()
     project_id = body.get("project_id")
-    records    = body.get("records", [])
+    records    = body.get("records", [])   # [{category, ai_result, record_id}, ...]
 
     if not project_id or not records:
         raise HTTPException(400, "project_id・records は必須です")
@@ -648,8 +648,24 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
     if not project:
         raise HTTPException(404, "工事が見つかりません")
 
+    # エクスポート済みIDを管理
+    if "exported_records" not in data:
+        data["exported_records"] = {}
+    cache_key = f"{user_id}_{project_id}"
+    exported_ids = set(data["exported_records"].get(cache_key, []))
+
+    # 未エクスポートのレコードのみ処理（重複防止）
+    new_records = [r for r in records if r.get("record_id") not in exported_ids]
+    if not new_records:
+        # 全て重複 → 既存Excelをそのまま返す
+        if cache_key in data.get("excel_cache", {}):
+            safe_name = project["name"].replace("/", "／")
+            return {"ok": True, "excel_b64": data["excel_cache"][cache_key],
+                    "filename": f"工事台帳_{safe_name}.xlsx", "skipped": len(records), "added": 0}
+        raise HTTPException(400, "エクスポートするデータがありません（全て処理済み）")
+
     by_cat = {cat: [] for cat in CATEGORIES}
-    for r in records:
+    for r in new_records:
         cat = r.get("category")
         if cat in CATEGORIES:
             by_cat[cat].append(r.get("ai_result", {}))
@@ -696,8 +712,14 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
     wb.save(buf)
     excel_bytes = buf.getvalue()
     data["excel_cache"][cache_key] = base64.b64encode(excel_bytes).decode()
+
+    # エクスポート済みIDを記録
+    new_ids = [r["record_id"] for r in new_records if r.get("record_id")]
+    exported_ids.update(new_ids)
+    data["exported_records"][cache_key] = list(exported_ids)
     save(data)
-    return {"ok": True, "excel_b64": data["excel_cache"][cache_key], "filename": filename}
+    return {"ok": True, "excel_b64": data["excel_cache"][cache_key], "filename": filename,
+            "added": len(new_records), "skipped": len(records) - len(new_records)}
 
 
 def _build_sheet1(ws, project):
@@ -1012,6 +1034,23 @@ def _setup_cat_sheet(ws, project, cat):
 
 
 
+
+
+# =========================================================
+# Excelキャッシュリセット（工事単位）
+# =========================================================
+@app.delete("/api/records/export/{project_id}")
+async def reset_export_cache(project_id: str, user_id: str = Depends(verify_token)):
+    data = load()
+    cache_key = f"{user_id}_{project_id}"
+    removed = False
+    if "excel_cache" in data and cache_key in data["excel_cache"]:
+        del data["excel_cache"][cache_key]
+        removed = True
+    if "exported_records" in data and cache_key in data["exported_records"]:
+        del data["exported_records"][cache_key]
+    save(data)
+    return {"ok": True, "reset": removed}
 
 # =========================================================
 # 工事経歴書 Excelエクスポート
