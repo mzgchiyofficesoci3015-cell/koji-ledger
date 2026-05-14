@@ -963,7 +963,7 @@ def _build_sheet2(ws, project):
     ws.merge_cells("A1:C1")
     ws["A1"] = f"集　計　表　　{project['name']}"
     ws["A1"].font = Font(name="游ゴシック", bold=True, size=13, color="FFFFFF")
-    ws["A1"].fill = PatternFill("solid", fgColor=HDR_BLUE)
+    ws["A1"].fill = PatternFill("solid", fgColor="333333")
     ws["A1"].alignment = Aln(horizontal="center", vertical="center")
     ws["A1"].border = bdr
 
@@ -975,8 +975,8 @@ def _build_sheet2(ws, project):
     ws.row_dimensions[3].height = 18
     for col,label in [(1,"費　目"),(2,"合計金額（円）"),(3,"備　考")]:
         c = ws.cell(row=3,column=col,value=label)
-        c.font = Font(name="游ゴシック",bold=True,size=10,color="FFFFFF")
-        c.fill = PatternFill("solid",fgColor=HDR_BLUE)
+        c.font = Font(name="游ゴシック",bold=True,size=10,color="1A1A1A")
+        c.fill = PatternFill("solid",fgColor="D9D9D9")
         c.alignment = Aln(horizontal="center",vertical="center")
         c.border = bdr
 
@@ -984,10 +984,9 @@ def _build_sheet2(ws, project):
     row = 4
     for cat in CATEGORIES:
         ws.row_dimensions[row].height = 22
-        color = CAT_C.get(cat,"333333")
         c1 = ws.cell(row=row,column=1,value=cat)
-        c1.font = Font(name="游ゴシック",bold=True,size=10,color="FFFFFF")
-        c1.fill = PatternFill("solid",fgColor=color)
+        c1.font = Font(name="游ゴシック",bold=True,size=10,color="1A1A1A")
+        c1.fill = PatternFill("solid",fgColor="EEEEEE")
         c1.alignment = Aln(horizontal="center",vertical="center")
         c1.border = bdr
         # 費目シートが存在する場合のみSUMIF
@@ -1050,23 +1049,23 @@ def _build_sheet2(ws, project):
 def _setup_cat_sheet(ws, project, cat):
     """費目シートの初期設定（A4縦）"""
     from openpyxl.styles import Alignment as Aln
-    color = CAT_COLORS.get(cat, "333333")
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.page_setup.orientation = "portrait"
     ws.merge_cells("A1:I1")
     ws["A1"] = f"{project['name']}　{cat}台帳"
     ws["A1"].font      = Font(name="游ゴシック", bold=True, size=13, color="FFFFFF")
-    ws["A1"].fill      = PatternFill("solid", fgColor=color)
+    ws["A1"].fill      = PatternFill("solid", fgColor="333333")
     ws["A1"].alignment = Aln(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 28
     ws["A2"] = f"工事番号：{project.get('num','')}　担当：{project.get('person','')}　請負金額：{project.get('contract_amount','')}円　場所：{project.get('location','')}"
     ws["A2"].font = Font(name="游ゴシック", size=10, color="666666")
+    ws["A2"].fill = PatternFill("solid", fgColor="F5F5F5")
     ws.merge_cells("A2:I2")
     headers = ["日付","費目","品名・作業内容","数量","単位","単価","金額","仕入先・外注先","備考（自由記載）"]
     for col, h in enumerate(headers, 1):
         c = ws.cell(row=3, column=col, value=h)
         c.font      = Font(name="游ゴシック", bold=True, size=10, color="FFFFFF")
-        c.fill      = PatternFill("solid", fgColor=color)
+        c.fill      = PatternFill("solid", fgColor="555555")
         c.alignment = Aln(horizontal="center", vertical="center")
         c.border    = _border()
     ws.row_dimensions[3].height = 22
