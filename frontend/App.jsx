@@ -168,6 +168,30 @@ export default function App(){
 // =========================================================
 // プルダウン候補付き入力コンポーネント
 // =========================================================
+// =========================================================
+// 消費税自動計算表示コンポーネント
+// =========================================================
+function TaxDisplay({amount}){
+  const num = Number(amount);
+  if(!amount || isNaN(num) || num <= 0) return <div style={{marginBottom:12}}/>;
+  const tax = Math.round(num * 10 / 110);
+  const ex  = num - tax;
+  return(
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12,
+      background:"#F8F8F6",borderRadius:10,padding:"8px 12px"}}>
+      <div>
+        <span style={{fontSize:11,color:"#888"}}>消費税を除く額（自動）</span>
+        <div style={{fontSize:14,fontWeight:600,color:"#1A1A1A"}}>¥{ex.toLocaleString()}</div>
+      </div>
+      <div>
+        <span style={{fontSize:11,color:"#888"}}>消費税額（10%）</span>
+        <div style={{fontSize:14,fontWeight:600,color:"#E65100"}}>¥{tax.toLocaleString()}</div>
+      </div>
+    </div>
+  );
+}
+
+
 function SuggestInput({label, value, onChange, placeholder, storageKey, style={}}){
   const [suggestions, setSuggestions] = useState([]);
   const [showList, setShowList] = useState(false);
@@ -403,18 +427,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
             <SuggestInput label={t.person||"記載者（任意）"} value={newPerson} onChange={setNewPerson} placeholder="例：日本太郎" storageKey="koji_persons" style={{marginBottom:12}}/>
             <div style={{marginBottom:12}}><label style={css.label}>{t.location||"工事場所（任意）"}</label><input style={css.input} value={newLocation} placeholder="例：○○市△△町1-2-3" onChange={e=>setNewLocation(e.target.value)}/></div>
             <div style={{marginBottom:6}}><label style={css.label}>{"請負金額・税込（必須）"}</label><input style={css.input} value={newContract} placeholder="例：1650000" onChange={e=>setNewContract(e.target.value)}/></div>
-            {newContract&&!isNaN(Number(newContract))&&Number(newContract)>0&&(()=>{
-              const total=Number(newContract);
-              const tax=Math.round(total*10/110);
-              const ex=total-tax;
-              return(
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12,background:"#F8F8F6",borderRadius:10,padding:"8px 12px"}}>
-                  <div><span style={{fontSize:11,color:"#888"}}>消費税を除く額（自動）</span><div style={{fontSize:14,fontWeight:600,color:"#1A1A1A"}}>¥{ex.toLocaleString()}</div></div>
-                  <div><span style={{fontSize:11,color:"#888"}}>消費税額（10%）</span><div style={{fontSize:14,fontWeight:600,color:"#E65100"}}>¥{tax.toLocaleString()}</div></div>
-                </div>
-              );
-            })()}
-            {!(newContract&&!isNaN(Number(newContract))&&Number(newContract)>0)&&<div style={{marginBottom:12}}/>}
+            <TaxDisplay amount={newContract}/>
             <div style={{marginBottom:12}}><label style={css.label}>{t.orderer||"注文者（任意）"}</label><input style={css.input} value={newOrderer} placeholder="例：日本 太郎" onChange={e=>setNewOrderer(e.target.value)}/></div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
               <div><label style={css.label}>{t.jvType||"元請/下請"}</label>
@@ -854,11 +867,8 @@ function ProjectList({t,projects,token,onRefresh}){
             <div key={label} style={{marginBottom:12}}><label style={css.label}>{label}</label><input style={css.input} type={type} value={val} placeholder={ph} onChange={e=>setter(e.target.value)}/></div>
           ))}
           <div style={{marginBottom:12}}><label style={css.label}>{"工事場所（任意）"}</label><input style={css.input} value={location2} placeholder="例：○○市△△町1-2-3" onChange={e=>setLocation2(e.target.value)}/></div>
-          <div style={{marginBottom:12}}><label style={css.label}>{"請負金額・税込（必須）"}</label><input style={css.input} value={contract2} placeholder="例：1650000" onChange={e=>setContract2(e.target.value)}/></div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
-            <div><label style={css.label}>{"消費税を除く額（任意）"}</label><input style={css.input} value={contractEx2} placeholder="例：1500000" onChange={e=>setContractEx2(e.target.value)}/></div>
-            <div><label style={css.label}>{"消費税額（任意）"}</label><input style={css.input} value={contractTax2} placeholder="例：150000" onChange={e=>setContractTax2(e.target.value)}/></div>
-          </div>
+          <div style={{marginBottom:6}}><label style={css.label}>{"請負金額・税込（必須）"}</label><input style={css.input} value={contract2} placeholder="例：1650000" onChange={e=>setContract2(e.target.value)}/></div>
+          <TaxDisplay amount={contract2}/>
           {error&&<div style={css.errorBox}>{error}</div>}
           <button style={{...css.btnPrimary,opacity:loading?.5:1}} onClick={create} disabled={loading}>{loading?"登録中...":t.register_project}</button>
         </div>
