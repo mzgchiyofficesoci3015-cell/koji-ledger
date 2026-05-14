@@ -174,6 +174,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
   const [newLocation,setNewLocation]=useState(""); const [newContract,setNewContract]=useState("");
   const [newOrderer,setNewOrderer]=useState(""); const [newJvType,setNewJvType]=useState("元請");
   const [newEngineer,setNewEngineer]=useState("");
+  const [newContractEx,setNewContractEx]=useState(""); const [newContractTax,setNewContractTax]=useState("");
   const [inputMethod,setMethod]=useState("");
   const [file,setFile]=useState(null); const [preview,setPreview]=useState("");
   const [aiResult,setAiResult]=useState(null);
@@ -207,7 +208,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
 
   const ensureProject=async()=>{
     if(selId)return selId;
-    const d=await apiFetch("/api/projects",{method:"POST",body:JSON.stringify({name:newName,num:newNum,start:newStart,person:newPerson,location:newLocation,contract_amount:newContract,orderer:newOrderer,jv_type:newJvType,engineer_name:newEngineer})},token);
+    const d=await apiFetch("/api/projects",{method:"POST",body:JSON.stringify({name:newName,num:newNum,start:newStart,person:newPerson,location:newLocation,contract_amount:newContract,contract_amount_ex:newContractEx,contract_amount_tax:newContractTax,orderer:newOrderer,jv_type:newJvType,engineer_name:newEngineer})},token);
     await onRefresh();return d.project.id;
   };
 
@@ -219,7 +220,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
       const mediaType = file.type || "image/jpeg";
       const payload=selId
         ?{project_id:selId,image_b64:b64,media_type:mediaType}
-        :{project_name:newName,project_num:newNum,project_start:newStart,project_person:newPerson,project_location:newLocation,project_contract:newContract,project_orderer:newOrderer,project_jv_type:newJvType,project_engineer:newEngineer,image_b64:b64,media_type:mediaType};
+        :{project_name:newName,project_num:newNum,project_start:newStart,project_person:newPerson,project_location:newLocation,project_contract:newContract,project_contract_ex:newContractEx,project_contract_tax:newContractTax,project_orderer:newOrderer,project_jv_type:newJvType,project_engineer:newEngineer,image_b64:b64,media_type:mediaType};
 
       // エラー詳細を取得するためapiFetchを直接使わず自前でfetch
       const headers={"Content-Type":"application/json",Authorization:`Bearer ${token}`};
@@ -293,7 +294,11 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
             </div>
             <div style={{marginBottom:12}}><label style={css.label}>{t.person}</label><input style={css.input} value={newPerson} placeholder="例：山田" onChange={e=>setNewPerson(e.target.value)}/></div>
             <div style={{marginBottom:12}}><label style={css.label}>{t.location||"工事場所（任意）"}</label><input style={css.input} value={newLocation} placeholder="例：○○市△△町1-2-3" onChange={e=>setNewLocation(e.target.value)}/></div>
-            <div style={{marginBottom:12}}><label style={css.label}>{t.contractAmount||"請負金額（必須）"}</label><input style={css.input} value={newContract} placeholder="例：1500000" onChange={e=>setNewContract(e.target.value)}/></div>
+            <div style={{marginBottom:12}}><label style={css.label}>{"請負金額・税込（必須）"}</label><input style={css.input} value={newContract} placeholder="例：1650000" onChange={e=>setNewContract(e.target.value)}/></div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+              <div><label style={css.label}>{"消費税を除く額（任意）"}</label><input style={css.input} value={newContractEx} placeholder="例：1500000" onChange={e=>setNewContractEx(e.target.value)}/></div>
+              <div><label style={css.label}>{"消費税額（任意）"}</label><input style={css.input} value={newContractTax} placeholder="例：150000" onChange={e=>setNewContractTax(e.target.value)}/></div>
+            </div>
             <div style={{marginBottom:12}}><label style={css.label}>{t.orderer||"注文者（任意）"}</label><input style={css.input} value={newOrderer} placeholder="例：本巣市長 藤原勉" onChange={e=>setNewOrderer(e.target.value)}/></div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
               <div><label style={css.label}>{t.jvType||"元請/下請"}</label>
@@ -667,11 +672,13 @@ function ProjectList({t,projects,token,onRefresh}){
   const [loading,setLoad]=useState(false); const [error,setError]=useState("");
   const [location2,setLocation2]=useState("");
   const [contract2,setContract2]=useState("");
+  const [contractEx2,setContractEx2]=useState("");
+  const [contractTax2,setContractTax2]=useState("");
 
   const create=async()=>{
     if(!name||!start||!contract2){setError("工事名・開始日・請負金額は必須です");return;}
     setLoad(true);
-    try{await apiFetch("/api/projects",{method:"POST",body:JSON.stringify({name,num,start,person,location:location2,contract_amount:contract2})},token);setShowForm(false);setName("");setNum("");setStart("");setPerson("");setLocation2("");setContract2("");setError("");await onRefresh();}
+    try{await apiFetch("/api/projects",{method:"POST",body:JSON.stringify({name,num,start,person,location:location2,contract_amount:contract2,contract_amount_ex:contractEx2,contract_amount_tax:contractTax2})},token);setShowForm(false);setName("");setNum("");setStart("");setPerson("");setLocation2("");setContract2("");setContractEx2("");setContractTax2("");setError("");await onRefresh();}
     catch(e){setError(e.message);}
     setLoad(false);
   };
@@ -722,7 +729,11 @@ function ProjectList({t,projects,token,onRefresh}){
             <div key={label} style={{marginBottom:12}}><label style={css.label}>{label}</label><input style={css.input} type={type} value={val} placeholder={ph} onChange={e=>setter(e.target.value)}/></div>
           ))}
           <div style={{marginBottom:12}}><label style={css.label}>{"工事場所（任意）"}</label><input style={css.input} value={location2} placeholder="例：○○市△△町1-2-3" onChange={e=>setLocation2(e.target.value)}/></div>
-          <div style={{marginBottom:12}}><label style={css.label}>{"請負金額（必須）"}</label><input style={css.input} value={contract2} placeholder="例：1500000" onChange={e=>setContract2(e.target.value)}/></div>
+          <div style={{marginBottom:12}}><label style={css.label}>{"請負金額・税込（必須）"}</label><input style={css.input} value={contract2} placeholder="例：1650000" onChange={e=>setContract2(e.target.value)}/></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+            <div><label style={css.label}>{"消費税を除く額（任意）"}</label><input style={css.input} value={contractEx2} placeholder="例：1500000" onChange={e=>setContractEx2(e.target.value)}/></div>
+            <div><label style={css.label}>{"消費税額（任意）"}</label><input style={css.input} value={contractTax2} placeholder="例：150000" onChange={e=>setContractTax2(e.target.value)}/></div>
+          </div>
           {error&&<div style={css.errorBox}>{error}</div>}
           <button style={{...css.btnPrimary,opacity:loading?.5:1}} onClick={create} disabled={loading}>{loading?"登録中...":t.register_project}</button>
         </div>
