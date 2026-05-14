@@ -298,7 +298,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
 
   const goStep2=async()=>{
     if(!newName||!newStart||!newContract||!newLocation||!newOrderer||!newEngineer||!newCompany){
-      setError("工事名・開始日・工事場所・請負金額・注文者・配置技術者氏名・会社名は必須です");return;}
+      setError("工事名・開始日・工事場所・請負金額・注文者・配置技術者氏名・会社名は必須項目です");return;}
     setError("");
     // 既存工事の場合は変更をサーバーに保存
     if(selId){
@@ -431,13 +431,13 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
               <label style={css.label}>{"請負金額・税込（必須）"}</label>
               <div style={{position:"relative"}}>
                 <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"#888",fontSize:15}}>¥</span>
-                <input style={{...css.input,paddingLeft:24}} value={newContract?Number(newContract.replace(/,/g,"")||0).toLocaleString():""} placeholder="1,650,000" onChange={e=>setNewContract(e.target.value.replace(/,/g,""))}/>
+                <input style={{...css.input,paddingLeft:24}} value={newContract&&!isNaN(Number(String(newContract).replace(/,/g,"")))?Number(String(newContract).replace(/,/g,"")).toLocaleString():newContract||""} placeholder="1,650,000" onChange={e=>setNewContract(e.target.value.replace(/,/g,""))}/>
               </div>
             </div>
             <TaxDisplay amount={newContract}/>
             <div style={{marginBottom:12}}><label style={css.label}>"注文者（必須）"</label><input style={css.input} value={newOrderer} placeholder="例：日本 太郎" onChange={e=>setNewOrderer(e.target.value)}/></div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
-              <div><label style={css.label}>{t.jvType||"元請/下請"}</label>
+              <div><label style={css.label}>"元請/下請（必須）"</label>
                 <select style={css.select} value={newJvType} onChange={e=>setNewJvType(e.target.value)}>
                   <option value="元請">元請</option><option value="下請">下請</option>
                 </select>
@@ -991,10 +991,9 @@ function CareerPage({t,projects,token,onRefresh}){
           <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto"}}>
             <p style={{fontWeight:700,fontSize:15,margin:"0 0 16px"}}>工事経歴情報を編集</p>
             {[
-              ["注文者",        "orderer",        "text",   "例：日本 太郎"],
-              ["工事場所",       "location",       "text",   "例：岐阜県本巣市"],
-              ["請負金額（円）", "contract_amount","text",   "例：1500000"],
-              ["配置技術者氏名", "engineer_name",  "text",   "例：日本太郎"],
+              ["注文者",        "orderer",     "text", "例：日本太郎"],
+              ["工事場所",       "location",    "text", "例：岐阜県本巣市"],
+              ["配置技術者氏名", "engineer_name","text","例：日本太郎"],
             ].map(([label,key,type,ph])=>(
               <div key={key} style={{marginBottom:12}}>
                 <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>{label}</label>
@@ -1003,6 +1002,22 @@ function CareerPage({t,projects,token,onRefresh}){
                   onChange={e=>setEditData(d=>({...d,[key]:e.target.value}))}/>
               </div>
             ))}
+            <div style={{marginBottom:12}}>
+              <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>請負金額（税込）</label>
+              <div style={{position:"relative"}}>
+                <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:"#888",fontSize:14}}>¥</span>
+                <input style={{width:"100%",padding:"10px 12px 10px 26px",borderRadius:10,border:"1.5px solid #E8E8E8",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}
+                  value={editData.contract_amount ? Number(String(editData.contract_amount).replace(/,/g,"")).toLocaleString() : ""}
+                  placeholder="1,500,000"
+                  onChange={e=>setEditData(d=>({...d,contract_amount:e.target.value.replace(/,/g,"")}))}/>
+              </div>
+              {editData.contract_amount&&!isNaN(Number(String(editData.contract_amount).replace(/,/g,"")))&&Number(String(editData.contract_amount).replace(/,/g,""))>0&&(
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:6,background:"#F8F8F6",borderRadius:8,padding:"6px 10px"}}>
+                  <div><span style={{fontSize:10,color:"#888"}}>消費税を除く額</span><div style={{fontSize:12,fontWeight:600}}>¥{(Number(String(editData.contract_amount).replace(/,/g,""))-Math.round(Number(String(editData.contract_amount).replace(/,/g,""))*10/110)).toLocaleString()}</div></div>
+                  <div><span style={{fontSize:10,color:"#888"}}>消費税額</span><div style={{fontSize:12,fontWeight:600,color:"#E65100"}}>¥{Math.round(Number(String(editData.contract_amount).replace(/,/g,""))*10/110).toLocaleString()}</div></div>
+                </div>
+              )}
+            </div>
             <div style={{marginBottom:12}}>
               <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>元請/下請</label>
               <select style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E8E8E8",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}
