@@ -179,6 +179,14 @@ async def create_project(request: Request, user_id: str = Depends(verify_token))
         "person":          body.get("person", ""),
         "location":        body.get("location", ""),
         "contract_amount": body.get("contract_amount", ""),
+        "orderer":         body.get("orderer", ""),           # 注文者
+        "jv_type":         body.get("jv_type", "元請"),       # 元請/下請
+        "engineer_name":   body.get("engineer_name", ""),     # 配置技術者氏名
+        "engineer_chief":  body.get("engineer_chief", ""),    # 主任技術者
+        "engineer_super":  body.get("engineer_super", ""),    # 監理技術者
+        "has_pc":          body.get("has_pc", False),         # PC
+        "has_surface":     body.get("has_surface", False),    # 法面処理
+        "has_steel":       body.get("has_steel", False),      # 鋼橋上部
         "done":            False,
         "owner":           user_id,
     }
@@ -198,6 +206,23 @@ async def complete_project(project_id: str, request: Request, user_id: str = Dep
                 p["completion_date"] = completion_date
             save(data)
             return {"ok": True}
+    raise HTTPException(404, "工事が見つかりません")
+
+@app.patch("/api/projects/{project_id}")
+async def update_project(project_id: str, request: Request, user_id: str = Depends(verify_token)):
+    """工事経歴書用の追加情報を更新する"""
+    body = await request.json()
+    data = load()
+    for p in data["projects"]:
+        if p["id"] == project_id and p.get("owner") == user_id:
+            updatable = ["orderer","jv_type","engineer_name","engineer_chief","engineer_super",
+                         "has_pc","has_surface","has_steel","location","contract_amount",
+                         "person","num","name","start"]
+            for key in updatable:
+                if key in body:
+                    p[key] = body[key]
+            save(data)
+            return {"ok": True, "project": p}
     raise HTTPException(404, "工事が見つかりません")
 
 @app.delete("/api/projects/{project_id}")
@@ -730,3 +755,245 @@ def _setup_cat_sheet(ws, project, cat):
     return ws
 
 
+
+
+# =========================================================
+# 工事経歴書 Excelエクスポート
+# =========================================================
+@app.post("/api/career/export")
+async def export_career(request: Request, user_id: str = Depends(verify_token)):
+    body     = await request.json()
+    year     = body.get("year")          # 対象年度（例：2024）
+    company  = body.get("company", "")   # 申請者名
+    permit   = body.get("permit", "")    # 許可番号
+    work_type= body.get("work_type", "") # 建設工事の種類
+
+    data = load()
+    projects = [p for p in data["projects"] if p.get("owner") == user_id]
+
+    # 年度フィルタ
+    if year:
+        def in_year(p):
+            start = p.get("start","")
+            comp  = p.get("completion_date","")
+            try:
+                s_year = int(start[:4]) if start else 0
+                c_year = int(comp[:4])  if comp  else 0
+                return s_year == int(year) or c_year == int(year)
+            except:
+                return False
+        projects = [p for p in projects if in_year(p)]
+
+    # Excelを生成
+    excel_bytes = build_career_excel(projects, year, company, permit, work_type)
+    excel_b64   = base64.b64encode(excel_bytes).decode()
+    filename    = f"工事経歴書_{year or '全期間'}.xlsx"
+    return {"ok": True, "excel_b64": excel_b64, "filename": filename}
+
+
+def build_career_excel(projects, year, company, permit, work_type):
+    from openpyxl.styles import Alignment as Aln
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = f"{year or '全期間'}年度"
+
+    # ── カラー・スタイル定義 ──
+    def b(row, col, val="", bold=False, size=9, align_h="center", align_v="center",
+          bg=None, border_all=True, wrap=True, merge_to=None):
+        c = ws.cell(row=row, column=col, value=val)
+        c.font = Font(name="游ゴシック", size=size, bold=bold)
+        c.alignment = Aln(horizontal=align_h, vertical=align_v, wrap_text=wrap)
+        if bg:
+            c.fill = PatternFill("solid", fgColor=bg)
+        if border_all:
+            side = Side(style="thin")
+            c.border = Border(left=side, right=side, top=side, bottom=side)
+        return c
+
+    def merge(r1, c1, r2, c2):
+        ws.merge_cells(start_row=r1, start_column=c1, end_row=r2, end_column=c2)
+
+    # ── 列幅設定 ──
+    col_widths = [18, 6, 4, 22, 12, 8, 8, 12, 10, 4, 4, 4, 10, 10]
+    for i, w in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ── タイトル行 ──
+    ws.row_dimensions[1].height = 16
+    ws.row_dimensions[2].height = 28
+    ws.row_dimensions[3].height = 16
+
+    ws["A1"] = "様式第二号（第二条、第十三条の二、第十三条の三、第十九条の八関係）"
+    ws["A1"].font = Font(name="游ゴシック", size=7)
+    ws["N1"] = "（用紙A４）"
+    ws["N1"].font = Font(name="游ゴシック", size=7)
+    ws["N1"].alignment = Aln(horizontal="right")
+
+    # タイトル中央
+    merge(2, 1, 2, 8)
+    ws["A2"] = "工　　　事　　　経　　　歴　　　書"
+    ws["A2"].font = Font(name="游ゴシック", size=14, bold=True)
+    ws["A2"].alignment = Aln(horizontal="center", vertical="center")
+
+    # 右側：決算期間・許可番号・申請者
+    period_start = f"令和{int(str(year)[2:])if year else ''}年01月01日" if year else ""
+    period_end   = f"令和{int(str(year)[2:])if year else ''}年12月31日" if year else ""
+    ws["I2"] = f"決算期間　{period_start}〜{period_end}
+許可番号　{permit}
+申請者　　{company}"
+    ws["I2"].font = Font(name="游ゴシック", size=8)
+    ws["I2"].alignment = Aln(horizontal="left", vertical="center", wrap_text=True)
+    merge(2, 9, 2, 14)
+
+    # 工事種類行
+    merge(3, 1, 3, 8)
+    ws["A3"] = f"（建設工事の種類）　　{work_type}　　工事（税込・税抜）"
+    ws["A3"].font = Font(name="游ゴシック", size=9)
+
+    # ── ヘッダー行（4〜6行） ──
+    HDR_BG = "D9D9D9"
+    for r in [4, 5, 6]:
+        ws.row_dimensions[r].height = 20
+
+    # 注文者
+    merge(4, 1, 6, 1); b(4, 1, "注
+文
+者", bold=True, bg=HDR_BG, wrap=True)
+    # 元請又は下請の別
+    merge(4, 2, 6, 2); b(4, 2, "元請
+又は
+下請
+の別", bold=True, bg=HDR_BG, size=7, wrap=True)
+    # JVの別
+    merge(4, 3, 6, 3); b(4, 3, "J
+V
+の
+別", bold=True, bg=HDR_BG, size=7, wrap=True)
+    # 工事名
+    merge(4, 4, 6, 4); b(4, 4, "工　　　事　　　名", bold=True, bg=HDR_BG)
+    # 工事場所
+    merge(4, 5, 6, 5); b(4, 5, "工事現場のある
+都道府県及び市
+区町村名", bold=True, bg=HDR_BG, size=7, wrap=True)
+    # 配置技術者
+    merge(4, 6, 4, 7); b(4, 6, "配　置　技　術　者", bold=True, bg=HDR_BG)
+    b(5, 6, "氏　名", bold=True, bg=HDR_BG)
+    b(5, 7, "主任技術者又は監理技術者
+の別（該当箇所にレ印を記載）", bold=True, bg=HDR_BG, size=6, wrap=True)
+    b(6, 6, "主任技術者", bold=True, bg=HDR_BG, size=7)
+    b(6, 7, "監理技術者", bold=True, bg=HDR_BG, size=7)
+    # 請負代金の額
+    merge(4, 8, 4, 11); b(4, 8, "請　負　代　金　の　額", bold=True, bg=HDR_BG)
+    merge(5, 8, 6, 8); b(5, 8, "", bold=True, bg=HDR_BG)
+    merge(5, 9, 5, 11); b(5, 9, "うち、
+・ＰＣ
+・法面処理
+・鋼橋上部", bold=True, bg=HDR_BG, size=6, wrap=True)
+    b(6, 9, "ＰＣ", bold=True, bg=HDR_BG, size=7)
+    b(6, 10, "法面
+処理", bold=True, bg=HDR_BG, size=7, wrap=True)
+    b(6, 11, "鋼橋
+上部", bold=True, bg=HDR_BG, size=7, wrap=True)
+    # 工期
+    merge(4, 12, 4, 14); b(4, 12, "工　　　　　期", bold=True, bg=HDR_BG)
+    merge(5, 12, 6, 12); b(5, 12, "着工年月", bold=True, bg=HDR_BG, size=7)
+    merge(5, 13, 6, 14); b(5, 13, "完成又は
+完成予定年月", bold=True, bg=HDR_BG, size=7, wrap=True)
+
+    # ── データ行（7行目〜） ──
+    ROW_START = 7
+    MAX_ROWS  = 15
+
+    def fmt_date(d):
+        if not d: return ""
+        try:
+            from datetime import datetime as dt
+            parsed = dt.strptime(d[:7], "%Y-%m")
+            reiwa = parsed.year - 2018
+            return f"令和{reiwa}年{parsed.month}月"
+        except:
+            return d
+
+    for i in range(MAX_ROWS):
+        r = ROW_START + i
+        ws.row_dimensions[r].height = 18
+        if i < len(projects):
+            p = projects[i]
+            amt = p.get("contract_amount","")
+            try: amt_int = int(str(amt).replace(",","").replace("円","")) // 1000
+            except: amt_int = ""
+
+            b(r, 1,  p.get("orderer",""),        align_h="left")
+            b(r, 2,  p.get("jv_type","元請"),    size=8)
+            b(r, 3,  "",                          size=8)
+            b(r, 4,  p.get("name",""),            align_h="left")
+            b(r, 5,  p.get("location",""),        size=8, align_h="left")
+            b(r, 6,  p.get("engineer_name",""),   size=8)
+            b(r, 7,  "レ" if p.get("engineer_chief") else "", size=8)
+            # 監理技術者は別列に
+            b(r, 8,  f"{amt_int}" if amt_int else "", align_h="right")
+            ws.cell(r, 8).number_format = '#,##0'
+            b(r, 9,  "レ" if p.get("has_pc") else "")
+            b(r, 10, "レ" if p.get("has_surface") else "")
+            b(r, 11, "レ" if p.get("has_steel") else "")
+            b(r, 12, fmt_date(p.get("start","")), size=8)
+            b(r, 13, fmt_date(p.get("completion_date","")), size=8)
+            merge(r, 13, r, 14)
+        else:
+            for col in range(1, 15):
+                b(r, col, "")
+            # 千円表示
+            b(r, 8, "", align_h="right")
+
+    # ── 小計・合計行 ──
+    sum_row = ROW_START + MAX_ROWS
+    ws.row_dimensions[sum_row].height = 22
+    ws.row_dimensions[sum_row+2].height = 22
+
+    total_amt = sum(
+        int(str(p.get("contract_amount","0")).replace(",","").replace("円","")) // 1000
+        for p in projects if p.get("contract_amount")
+    ) if projects else 0
+    primary = sum(1 for p in projects if p.get("jv_type","元請") == "元請")
+    primary_amt = sum(
+        int(str(p.get("contract_amount","0")).replace(",","").replace("円","")) // 1000
+        for p in projects if p.get("jv_type","元請") == "元請" and p.get("contract_amount")
+    )
+
+    merge(sum_row, 1, sum_row, 6); b(sum_row, 1, "小　計", bold=True, bg=HDR_BG)
+    b(sum_row, 7, f"{len(projects)}件", bold=True, bg=HDR_BG)
+    b(sum_row, 8, total_amt if total_amt else "", bold=True, bg=HDR_BG, align_h="right")
+    ws.cell(sum_row, 8).number_format = '#,##0'
+    for col in range(9, 15):
+        b(sum_row, col, "", bg=HDR_BG)
+
+    # うち元請工事
+    merge(sum_row, 12, sum_row, 13)
+    ws.cell(sum_row, 12).value = "うち元請工事"
+    ws.cell(sum_row, 12).font = Font(name="游ゴシック", size=7, bold=True)
+    ws.cell(sum_row, 12).alignment = Aln(horizontal="center")
+    b(sum_row, 14, primary_amt if primary_amt else "", bold=True, align_h="right")
+    ws.cell(sum_row, 14).number_format = '#,##0'
+
+    # 合計（全体）
+    merge(sum_row+2, 1, sum_row+2, 6); b(sum_row+2, 1, "合　計", bold=True, bg=HDR_BG)
+    b(sum_row+2, 7, f"{len(projects)}件", bold=True, bg=HDR_BG)
+    b(sum_row+2, 8, total_amt if total_amt else "", bold=True, bg=HDR_BG, align_h="right")
+    ws.cell(sum_row+2, 8).number_format = '#,##0'
+    for col in range(9, 15):
+        b(sum_row+2, col, "", bg=HDR_BG)
+
+    merge(sum_row+2, 12, sum_row+2, 13)
+    ws.cell(sum_row+2, 12).value = "うち元請工事"
+    ws.cell(sum_row+2, 12).font = Font(name="游ゴシック", size=7, bold=True)
+    ws.cell(sum_row+2, 12).alignment = Aln(horizontal="center")
+    b(sum_row+2, 14, primary_amt if primary_amt else "", bold=True, align_h="right")
+    ws.cell(sum_row+2, 14).number_format = '#,##0'
+
+    ws.print_area = f"A1:N{sum_row+3}"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.orientation = "landscape"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

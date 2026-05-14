@@ -26,7 +26,7 @@ const T = {
     noProjects:"登録された工事はありません",
     newProject:"新規工事登録", complete:"完了にする", active:"進行中", done:"完了",
     register_project:"工事を登録",
-    nav:{ add:"追加", list:"一覧", temp:"一時保管" },
+    nav:{ add:"追加", list:"一覧", temp:"一時保管", career:"工事経歴" },
     requiredError:"工事名・開始日・請負金額は必須です",
     location:"工事場所（任意）",
     contractAmount:"請負金額（必須）",
@@ -52,6 +52,14 @@ const T = {
     editRecord:"編集", deleteRecord:"削除",
     editTitle:"明細を編集", saveEdit:"保存", cancelEdit:"キャンセル",
     confirmDelete:"このデータを削除しますか？",
+    orderer:"注文者（任意）", jvType:"元請/下請", engineerName:"配置技術者氏名（任意）",
+    chiefEngineer:"主任技術者", superEngineer:"監理技術者",
+    hasPC:"ＰＣ", hasSurface:"法面処理", hasSteel:"鋼橋上部",
+    careerTitle:"工事経歴", careerExport:"工事経歴書をExcelで出力",
+    companyName:"申請者名", permitNo:"許可番号", workType:"建設工事の種類",
+    selectYear:"対象年度", exportCareer:"工事経歴書を出力",
+    editProject:"工事情報を編集", saveProject:"保存",
+    completionDateLabel:"完成日または完成予定日（必須）",
   },
 };
 
@@ -142,11 +150,12 @@ export default function App(){
           <button onClick={logout} style={{background:"rgba(255,80,80,.2)",border:"none",color:"#fff",padding:"4px 10px",borderRadius:6,fontSize:12,cursor:"pointer"}}>{t.logout}</button>
         </div>
       </header>
+      {page==="career" && <CareerPage t={t} projects={projects} token={token} onRefresh={fetchProjects}/>}
       {page==="add"  && <AddPage  t={t} projects={projects} token={token} onRefresh={fetchProjects} onSaveTemp={saveTemp}/>}
       {page==="list" && <ProjectList t={t} projects={projects} token={token} onRefresh={fetchProjects}/>}
       {page==="temp" && <TempPage t={t} projects={projects} tempData={tempData} onUpdate={updateTemp} token={token}/>}
       <nav style={css.bottomNav}>
-        {[["add","➕",t.nav.add],["list","📋",t.nav.list],["temp","📁",t.nav.temp]].map(([key,icon,label])=>(
+        {[["add","➕",t.nav.add],["list","📋",t.nav.list],["temp","📁",t.nav.temp],["career","📜",t.nav.career]].map(([key,icon,label])=>(
           <button key={key} style={css.navBtn(page===key)} onClick={()=>setPage(key)}>
             <span style={{fontSize:24}}>{icon}</span>{label}
           </button>
@@ -163,6 +172,8 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
   const [newName,setNewName]=useState(""); const [newStart,setNewStart]=useState("");
   const [newPerson,setNewPerson]=useState(""); const [newNum,setNewNum]=useState("");
   const [newLocation,setNewLocation]=useState(""); const [newContract,setNewContract]=useState("");
+  const [newOrderer,setNewOrderer]=useState(""); const [newJvType,setNewJvType]=useState("元請");
+  const [newEngineer,setNewEngineer]=useState("");
   const [inputMethod,setMethod]=useState("");
   const [file,setFile]=useState(null); const [preview,setPreview]=useState("");
   const [aiResult,setAiResult]=useState(null);
@@ -196,7 +207,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
 
   const ensureProject=async()=>{
     if(selId)return selId;
-    const d=await apiFetch("/api/projects",{method:"POST",body:JSON.stringify({name:newName,num:newNum,start:newStart,person:newPerson,location:newLocation,contract_amount:newContract})},token);
+    const d=await apiFetch("/api/projects",{method:"POST",body:JSON.stringify({name:newName,num:newNum,start:newStart,person:newPerson,location:newLocation,contract_amount:newContract,orderer:newOrderer,jv_type:newJvType,engineer_name:newEngineer})},token);
     await onRefresh();return d.project.id;
   };
 
@@ -208,7 +219,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
       const mediaType = file.type || "image/jpeg";
       const payload=selId
         ?{project_id:selId,image_b64:b64,media_type:mediaType}
-        :{project_name:newName,project_num:newNum,project_start:newStart,project_person:newPerson,project_location:newLocation,project_contract:newContract,image_b64:b64,media_type:mediaType};
+        :{project_name:newName,project_num:newNum,project_start:newStart,project_person:newPerson,project_location:newLocation,project_contract:newContract,project_orderer:newOrderer,project_jv_type:newJvType,project_engineer:newEngineer,image_b64:b64,media_type:mediaType};
 
       // エラー詳細を取得するためapiFetchを直接使わず自前でfetch
       const headers={"Content-Type":"application/json",Authorization:`Bearer ${token}`};
@@ -282,7 +293,16 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
             </div>
             <div style={{marginBottom:12}}><label style={css.label}>{t.person}</label><input style={css.input} value={newPerson} placeholder="例：山田" onChange={e=>setNewPerson(e.target.value)}/></div>
             <div style={{marginBottom:12}}><label style={css.label}>{t.location||"工事場所（任意）"}</label><input style={css.input} value={newLocation} placeholder="例：○○市△△町1-2-3" onChange={e=>setNewLocation(e.target.value)}/></div>
-            <div><label style={css.label}>{t.contractAmount||"請負金額（必須）"}</label><input style={css.input} value={newContract} placeholder="例：1500000" onChange={e=>setNewContract(e.target.value)}/></div>
+            <div style={{marginBottom:12}}><label style={css.label}>{t.contractAmount||"請負金額（必須）"}</label><input style={css.input} value={newContract} placeholder="例：1500000" onChange={e=>setNewContract(e.target.value)}/></div>
+            <div style={{marginBottom:12}}><label style={css.label}>{t.orderer||"注文者（任意）"}</label><input style={css.input} value={newOrderer} placeholder="例：本巣市長 藤原勉" onChange={e=>setNewOrderer(e.target.value)}/></div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+              <div><label style={css.label}>{t.jvType||"元請/下請"}</label>
+                <select style={css.select} value={newJvType} onChange={e=>setNewJvType(e.target.value)}>
+                  <option value="元請">元請</option><option value="下請">下請</option>
+                </select>
+              </div>
+              <div><label style={css.label}>{t.engineerName||"配置技術者氏名（任意）"}</label><input style={css.input} value={newEngineer} placeholder="例：山田 太郎" onChange={e=>setNewEngineer(e.target.value)}/></div>
+            </div>
           </div>
           {error&&<div style={css.errorBox}>{error}</div>}
           <button style={{...css.btnPrimary,marginTop:18}} onClick={goStep2}>{t.next} →</button>
@@ -638,16 +658,18 @@ function ProjectList({t,projects,token,onRefresh}){
     catch(e){setError(e.message);}
     setLoad(false);
   };
-  const [completionDates,setCompletionDates]=useState({});
-  const complete=async(id,n)=>{
-    const date=window.prompt(`「${n}」を完了にします。
-完成日または完成予定日を入力してください（必須）
-例：2024-11-30`,"");
-    if(!date){alert("完成日は必須です。");return;}
+  const [completingId,setCompletingId]=useState(null);
+  const [completingName,setCompletingName]=useState("");
+  const [completionDate,setCompletionDate]=useState("");
+  const [completingError,setCompletingError]=useState("");
+
+  const complete=async()=>{
+    if(!completionDate){setCompletingError("完成日は必須です。");return;}
     try{
-      await apiFetch(`/api/projects/${id}/done`,{method:"PATCH",body:JSON.stringify({completion_date:date})},token);
+      await apiFetch(`/api/projects/${completingId}/done`,{method:"PATCH",body:JSON.stringify({completion_date:completionDate})},token);
+      setCompletingId(null);setCompletingName("");setCompletionDate("");setCompletingError("");
       await onRefresh();
-    }catch{}
+    }catch(e){setCompletingError(e.message);}
   };
   const deleteProject=async(id,n)=>{
     if(!window.confirm(`「${n}」を一覧から完全に削除しますか？この操作は元に戻せません。`))return;
@@ -659,6 +681,22 @@ function ProjectList({t,projects,token,onRefresh}){
 
   return(
     <div style={{maxWidth:560,margin:"0 auto",padding:16}}>
+      {/* 完了モーダル */}
+      {completingId&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:400,boxShadow:"0 8px 32px rgba(0,0,0,0.2)"}}>
+            <p style={{fontWeight:700,fontSize:15,margin:"0 0 8px"}}>工事を完了にする</p>
+            <p style={{fontSize:13,color:C.sub,margin:"0 0 16px"}}>「{completingName}」</p>
+            <label style={css.label}>{t.completionDateLabel||"完成日または完成予定日（必須）"}</label>
+            <input style={{...css.input,marginBottom:12}} type="date" value={completionDate} onChange={e=>setCompletionDate(e.target.value)}/>
+            {completingError&&<div style={css.errorBox}>{completingError}</div>}
+            <div style={{display:"flex",gap:10,marginTop:12}}>
+              <button style={{...css.btnOutline,flex:1}} onClick={()=>{setCompletingId(null);setCompletionDate("");}}>キャンセル</button>
+              <button style={{...css.btnPrimary,flex:2,marginTop:0}} onClick={complete}>完了にする</button>
+            </div>
+          </div>
+        </div>
+      )}
       <button style={{...css.btnPrimary,marginBottom:12}} onClick={()=>setShowForm(s=>!s)}>{showForm?"✕ キャンセル":`＋ ${t.newProject}`}</button>
       {showForm&&(
         <div style={css.card}>
@@ -678,7 +716,7 @@ function ProjectList({t,projects,token,onRefresh}){
           active.map(p=>(
             <div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 0",borderBottom:`1px solid ${C.border}`}}>
               <div style={{flex:1}}><div style={{fontWeight:600,fontSize:14}}>{p.name}</div><div style={{fontSize:12,color:C.sub,marginTop:2}}>{p.num&&`${p.num}　`}{p.start&&`開始：${p.start}`}{p.person&&`　担当：${p.person}`}</div></div>
-              <button style={css.btnDanger} onClick={()=>complete(p.id,p.name)}>{t.complete}</button>
+              <button style={css.btnDanger} onClick={()=>{setCompletingId(p.id);setCompletingName(p.name);setCompletionDate("");setCompletingError("");}}>{t.complete}</button>
             </div>
           ))
         }
@@ -697,6 +735,199 @@ function ProjectList({t,projects,token,onRefresh}){
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+
+// =========================================================
+// 工事経歴ページ
+// =========================================================
+function CareerPage({t,projects,token,onRefresh}){
+  const [selYear,setSelYear]=useState(new Date().getFullYear().toString());
+  const [company,setCompany]=useState("");
+  const [permit,setPermit]=useState("");
+  const [workType,setWorkType]=useState("大工");
+  const [editId,setEditId]=useState(null);
+  const [editData,setEditData]=useState({});
+  const [exporting,setExporting]=useState(false);
+  const [exportMsg,setExportMsg]=useState("");
+  const [error,setError]=useState("");
+
+  // 対象年度の工事を抽出
+  const filtered=projects.filter(p=>{
+    if(!selYear)return true;
+    const s=(p.start||"").substring(0,4);
+    const c=(p.completion_date||"").substring(0,4);
+    return s===selYear||c===selYear;
+  });
+
+  // 年度リスト生成
+  const years=[...new Set(projects.flatMap(p=>{
+    const s=(p.start||"").substring(0,4);
+    const c=(p.completion_date||"").substring(0,4);
+    return [s,c].filter(Boolean);
+  }))].sort((a,b)=>b-a);
+
+  const startEdit=(p)=>{
+    setEditId(p.id);
+    setEditData({
+      orderer:p.orderer||"", jv_type:p.jv_type||"元請",
+      engineer_name:p.engineer_name||"",
+      engineer_chief:p.engineer_chief||false,
+      engineer_super:p.engineer_super||false,
+      has_pc:p.has_pc||false, has_surface:p.has_surface||false, has_steel:p.has_steel||false,
+      location:p.location||"", contract_amount:p.contract_amount||"",
+    });
+  };
+
+  const saveEdit=async()=>{
+    try{
+      await apiFetch(`/api/projects/${editId}`,{method:"PATCH",body:JSON.stringify(editData)},token);
+      await onRefresh();setEditId(null);setError("");
+    }catch(e){setError(e.message);}
+  };
+
+  const exportCareer=async()=>{
+    setExporting(true);setError("");
+    try{
+      const d=await apiFetch("/api/career/export",{method:"POST",body:JSON.stringify({year:selYear,company,permit,work_type:workType})},token);
+      const binary=atob(d.excel_b64);
+      const bytes=new Uint8Array(binary.length);
+      for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+      const blob=new Blob([bytes],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");
+      a.href=url;a.download=d.filename;a.click();
+      URL.revokeObjectURL(url);
+      setExportMsg("✅ 工事経歴書をダウンロードしました");
+      setTimeout(()=>setExportMsg(""),4000);
+    }catch(e){setError("エクスポートに失敗しました："+e.message);}
+    setExporting(false);
+  };
+
+  return(
+    <div style={{maxWidth:720,margin:"0 auto",padding:16,paddingBottom:80}}>
+      {/* 編集モーダル */}
+      {editId&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16,overflowY:"auto"}}>
+          <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto"}}>
+            <p style={{fontWeight:700,fontSize:15,margin:"0 0 16px"}}>工事経歴情報を編集</p>
+            {[
+              ["注文者",        "orderer",        "text",   "例：本巣市長 藤原勉"],
+              ["工事場所",       "location",       "text",   "例：岐阜県本巣市"],
+              ["請負金額（円）", "contract_amount","text",   "例：1500000"],
+              ["配置技術者氏名", "engineer_name",  "text",   "例：溝口 貴敏"],
+            ].map(([label,key,type,ph])=>(
+              <div key={key} style={{marginBottom:12}}>
+                <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>{label}</label>
+                <input style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E8E8E8",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}
+                  type={type} value={editData[key]||""} placeholder={ph}
+                  onChange={e=>setEditData(d=>({...d,[key]:e.target.value}))}/>
+              </div>
+            ))}
+            <div style={{marginBottom:12}}>
+              <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>元請/下請</label>
+              <select style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E8E8E8",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}
+                value={editData.jv_type||"元請"} onChange={e=>setEditData(d=>({...d,jv_type:e.target.value}))}>
+                <option value="元請">元請</option><option value="下請">下請</option>
+              </select>
+            </div>
+            <div style={{marginBottom:12}}>
+              <label style={{fontSize:12,color:"#888",marginBottom:6,display:"block"}}>技術者区分</label>
+              <div style={{display:"flex",gap:16}}>
+                {[["engineer_chief","主任技術者"],["engineer_super","監理技術者"]].map(([key,label])=>(
+                  <label key={key} style={{display:"flex",alignItems:"center",gap:6,fontSize:13,cursor:"pointer"}}>
+                    <input type="checkbox" checked={!!editData[key]} onChange={e=>setEditData(d=>({...d,[key]:e.target.checked}))}/>
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div style={{marginBottom:16}}>
+              <label style={{fontSize:12,color:"#888",marginBottom:6,display:"block"}}>特殊工事区分</label>
+              <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+                {[["has_pc","ＰＣ"],["has_surface","法面処理"],["has_steel","鋼橋上部"]].map(([key,label])=>(
+                  <label key={key} style={{display:"flex",alignItems:"center",gap:6,fontSize:13,cursor:"pointer"}}>
+                    <input type="checkbox" checked={!!editData[key]} onChange={e=>setEditData(d=>({...d,[key]:e.target.checked}))}/>
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+            {error&&<div style={{background:"#FFEBEE",color:"#C62828",padding:"8px 12px",borderRadius:8,fontSize:13,marginBottom:10}}>{error}</div>}
+            <div style={{display:"flex",gap:10}}>
+              <button style={{flex:1,padding:"12px",borderRadius:10,border:"1.5px solid #E8E8E8",background:"#fff",cursor:"pointer",fontFamily:"inherit"}} onClick={()=>setEditId(null)}>キャンセル</button>
+              <button style={{flex:2,padding:"12px",borderRadius:12,background:"#1A1A1A",color:"#fff",border:"none",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit",marginTop:0}} onClick={saveEdit}>保存</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ヘッダー */}
+      <div style={{background:"#fff",borderRadius:16,padding:"16px",marginBottom:12,boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
+        <p style={{fontSize:15,fontWeight:700,margin:"0 0 14px"}}>📜 工事経歴書エクスポート</p>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <div>
+            <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>対象年度</label>
+            <select style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E8E8E8",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}
+              value={selYear} onChange={e=>setSelYear(e.target.value)}>
+              <option value="">全期間</option>
+              {years.map(y=><option key={y} value={y}>{y}年</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>建設工事の種類</label>
+            <input style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E8E8E8",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}} value={workType} onChange={e=>setWorkType(e.target.value)} placeholder="例：大工"/>
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+          <div>
+            <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>申請者名</label>
+            <input style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E8E8E8",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}} value={company} onChange={e=>setCompany(e.target.value)} placeholder="例：みのり工務店"/>
+          </div>
+          <div>
+            <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>許可番号</label>
+            <input style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E8E8E8",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}} value={permit} onChange={e=>setPermit(e.target.value)} placeholder="例：第 14310 号"/>
+          </div>
+        </div>
+        {exportMsg&&<div style={{background:"#E8F5E9",color:"#2E7D32",padding:"8px 12px",borderRadius:8,fontSize:13,marginBottom:10}}>{exportMsg}</div>}
+        {error&&<div style={{background:"#FFEBEE",color:"#C62828",padding:"8px 12px",borderRadius:8,fontSize:13,marginBottom:10}}>{error}</div>}
+        <button style={{width:"100%",padding:"13px",borderRadius:12,background:exporting?"#555":"#1A1A1A",color:"#fff",border:"none",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}
+          onClick={exportCareer} disabled={exporting}>
+          {exporting?"⏳ 生成中...":"⬇ 工事経歴書をExcelで出力"}
+        </button>
+      </div>
+
+      {/* 工事一覧（編集可能） */}
+      <div style={{background:"#fff",borderRadius:16,padding:"16px",boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
+        <p style={{fontSize:13,fontWeight:600,color:"#888",margin:"0 0 12px"}}>
+          {selYear?`${selYear}年度`:"全期間"}の工事一覧（{filtered.length}件）
+          <span style={{fontSize:11,fontWeight:400,marginLeft:8}}>※各工事の✏️から追加情報を編集できます</span>
+        </p>
+        {filtered.length===0&&<p style={{color:"#bbb",fontSize:14,textAlign:"center",padding:"20px 0"}}>対象の工事がありません</p>}
+        {filtered.map(p=>(
+          <div key={p.id} style={{padding:"12px 0",borderBottom:"1px solid #F0F0F0",display:"flex",alignItems:"flex-start",gap:10}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:14,marginBottom:4}}>{p.name}</div>
+              <div style={{fontSize:11,color:"#888",display:"flex",flexWrap:"wrap",gap:"4px 12px"}}>
+                <span>注文者：{p.orderer||"—"}</span>
+                <span>{p.jv_type||"元請"}</span>
+                <span>場所：{p.location||"—"}</span>
+                <span>請負：{p.contract_amount?`¥${Number(p.contract_amount).toLocaleString()}`:"—"}</span>
+                <span>技術者：{p.engineer_name||"—"}</span>
+                <span>着工：{p.start||"—"}</span>
+                <span>完成：{p.completion_date||"—"}</span>
+                {p.has_pc&&<span style={{color:"#1565C0",fontWeight:600}}>ＰＣ</span>}
+                {p.has_surface&&<span style={{color:"#2E7D32",fontWeight:600}}>法面処理</span>}
+                {p.has_steel&&<span style={{color:"#6A1B9A",fontWeight:600}}>鋼橋上部</span>}
+              </div>
+            </div>
+            <button style={{padding:"6px 12px",borderRadius:8,background:"#fff",color:"#1A1A1A",border:"1.5px solid #E8E8E8",fontSize:12,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}
+              onClick={()=>startEdit(p)}>✏️ 編集</button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
