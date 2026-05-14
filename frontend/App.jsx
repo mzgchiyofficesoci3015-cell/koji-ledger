@@ -884,7 +884,7 @@ function CareerPage({t,projects,token,onRefresh}){
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
           <div>
             <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>申請者名</label>
-            <input style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E8E8E8",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}} value={company} onChange={e=>setCompany(e.target.value)} placeholder="例：みのり工務店"/>
+            <input style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E8E8E8",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}} value={company} onChange={e=>setCompany(e.target.value)} placeholder="例：山田建設"/>
           </div>
           <div>
             <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>許可番号</label>
