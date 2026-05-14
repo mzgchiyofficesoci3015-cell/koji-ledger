@@ -610,15 +610,33 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
     filename  = f"工事台帳_{safe_name}.xlsx"
 
     # Excelを読み込み or 新規作成
-    if cache_key in data["excel_cache"]:
-        wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(data["excel_cache"][cache_key])))
-    else:
+    try:
+        if cache_key in data["excel_cache"]:
+            wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(data["excel_cache"][cache_key])))
+        else:
+            raise KeyError("new")
+    except Exception:
+        # キャッシュが壊れているか存在しない場合は新規作成
+        if cache_key in data.get("excel_cache", {}):
+            del data["excel_cache"][cache_key]
         wb = openpyxl.Workbook()
         wb.remove(wb.active)
-        _build_sheet1(wb.create_sheet("工事台帳", 0), project)
-        _build_sheet2(wb.create_sheet("集計", 1), project)
+        try:
+            _build_sheet1(wb.create_sheet("工事台帳", 0), project)
+        except Exception as e:
+            print(f"sheet1 error: {e}")
+            wb.create_sheet("工事台帳", 0)
+        try:
+            _build_sheet2(wb.create_sheet("集計", 1), project)
+        except Exception as e:
+            print(f"sheet2 error: {e}")
+            wb.create_sheet("集計", 1)
         for cat in CATEGORIES:
-            _setup_cat_sheet(wb.create_sheet(cat), project, cat)
+            try:
+                _setup_cat_sheet(wb.create_sheet(cat), project, cat)
+            except Exception as e:
+                print(f"cat sheet error {cat}: {e}")
+                wb.create_sheet(cat)
 
     added = 0
     overwritten = 0
@@ -683,9 +701,15 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
                 exported_ids.add(record_id)
             added += 1
 
-    buf = io.BytesIO()
-    wb.save(buf)
-    excel_bytes = buf.getvalue()
+    try:
+        buf = io.BytesIO()
+        wb.save(buf)
+        excel_bytes = buf.getvalue()
+    except Exception as e:
+        import traceback
+        print(f"Excel save error: {traceback.format_exc()}")
+        raise HTTPException(500, f"Excel生成に失敗しました: {str(e)}")
+
     data["excel_cache"][cache_key]      = base64.b64encode(excel_bytes).decode()
     data["exported_records"][cache_key] = list(exported_ids)
     data["row_map"][cache_key]          = row_map

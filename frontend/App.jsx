@@ -28,7 +28,7 @@ const T = {
     register_project:"工事を登録",
     nav:{ add:"追加", list:"一覧", temp:"原価明細書", career:"工事経歴" },
     requiredError:"工事名・開始日・請負金額は必須です",
-    location:"工事場所（任意）",
+    location:"工事場所（必須）",
     contractAmount:"請負金額（必須）",
     contractAmountPlaceholder:"例：1500000",
     completionDate:"完成日（必須）",
@@ -184,7 +184,7 @@ function TaxDisplay({amount}){
         <div style={{fontSize:14,fontWeight:600,color:"#1A1A1A"}}>¥{ex.toLocaleString()}</div>
       </div>
       <div>
-        <span style={{fontSize:11,color:"#888"}}>消費税額（10%）</span>
+        <span style={{fontSize:11,color:"#888"}}>消費税額（10%自動）</span>
         <div style={{fontSize:14,fontWeight:600,color:"#E65100"}}>¥{tax.toLocaleString()}</div>
       </div>
     </div>
@@ -297,7 +297,8 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
   };
 
   const goStep2=async()=>{
-    if(!newName||!newStart||!newContract){setError(t.requiredError);return;}
+    if(!newName||!newStart||!newContract||!newLocation||!newOrderer||!newEngineer||!newCompany){
+      setError("工事名・開始日・工事場所・請負金額・注文者・配置技術者氏名・会社名は必須です");return;}
     setError("");
     // 既存工事の場合は変更をサーバーに保存
     if(selId){
@@ -425,19 +426,25 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
               <div><label style={css.label}>{t.projectNum}</label><input style={css.input} value={newNum} placeholder="例：2024-001" onChange={e=>setNewNum(e.target.value)}/></div>
             </div>
             <SuggestInput label={t.person||"記載者（任意）"} value={newPerson} onChange={setNewPerson} placeholder="例：日本太郎" storageKey="koji_persons" style={{marginBottom:12}}/>
-            <div style={{marginBottom:12}}><label style={css.label}>{t.location||"工事場所（任意）"}</label><input style={css.input} value={newLocation} placeholder="例：○○市△△町1-2-3" onChange={e=>setNewLocation(e.target.value)}/></div>
-            <div style={{marginBottom:6}}><label style={css.label}>{"請負金額・税込（必須）"}</label><input style={css.input} value={newContract} placeholder="例：1650000" onChange={e=>setNewContract(e.target.value)}/></div>
+            <div style={{marginBottom:12}}><label style={css.label}>"工事場所（必須）"</label><input style={css.input} value={newLocation} placeholder="例：○○市△△町1-2-3" onChange={e=>setNewLocation(e.target.value)}/></div>
+            <div style={{marginBottom:6}}>
+              <label style={css.label}>{"請負金額・税込（必須）"}</label>
+              <div style={{position:"relative"}}>
+                <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"#888",fontSize:15}}>¥</span>
+                <input style={{...css.input,paddingLeft:24}} value={newContract?Number(newContract.replace(/,/g,"")||0).toLocaleString():""} placeholder="1,650,000" onChange={e=>setNewContract(e.target.value.replace(/,/g,""))}/>
+              </div>
+            </div>
             <TaxDisplay amount={newContract}/>
-            <div style={{marginBottom:12}}><label style={css.label}>{t.orderer||"注文者（任意）"}</label><input style={css.input} value={newOrderer} placeholder="例：日本 太郎" onChange={e=>setNewOrderer(e.target.value)}/></div>
+            <div style={{marginBottom:12}}><label style={css.label}>"注文者（必須）"</label><input style={css.input} value={newOrderer} placeholder="例：日本 太郎" onChange={e=>setNewOrderer(e.target.value)}/></div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
               <div><label style={css.label}>{t.jvType||"元請/下請"}</label>
                 <select style={css.select} value={newJvType} onChange={e=>setNewJvType(e.target.value)}>
                   <option value="元請">元請</option><option value="下請">下請</option>
                 </select>
               </div>
-              <SuggestInput label={t.engineerName||"配置技術者氏名（任意）"} value={newEngineer} onChange={setNewEngineer} placeholder="例：日本太郎" storageKey="koji_engineers"/>
+              <SuggestInput label="配置技術者氏名（必須）" value={newEngineer} onChange={setNewEngineer} placeholder="例：日本太郎" storageKey="koji_engineers"/>
             </div>
-            <div style={{marginBottom:12}}><label style={css.label}>{"会社名（任意）"}</label>
+            <div style={{marginBottom:12}}><label style={css.label}>{"会社名（必須）"}</label>
               <input style={css.input} value={newCompany} placeholder="例：工事台帳会社" onChange={e=>{setNewCompany(e.target.value);localStorage.setItem("koji_company",e.target.value);}}/></div>
           </div>
           {error&&<div style={css.errorBox}>{error}</div>}
@@ -493,7 +500,7 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
               </details>
               {saveStatus===""&&<div style={{display:"flex",gap:10,marginTop:16}}><button style={css.btnOutline} onClick={()=>{setAiResult(null);setFile(null);setPreview("");}}>{t.retry}</button><button style={{...css.btnPrimary,flex:1,marginTop:0}} onClick={savePhoto}>📁 {t.saveToTemp}</button></div>}
               {saveStatus==="saving"&&<button style={{...css.btnPrimary,marginTop:16,opacity:.6}} disabled><span style={css.spinner}/>{t.saving}</button>}
-              {saveStatus==="saved"&&<><div style={css.successBox}>{t.saved}</div><button style={{...css.btnPrimary,marginTop:12}} onClick={reset}>{t.addMore}</button></>}
+              {saveStatus==="saved"&&<><div style={css.successBox}>{t.saved}</div><button style={{...css.btnPrimary,marginTop:12}} onClick={()=>reset(true)}>{t.addMore}</button></>}
             </>)}
             {!aiResult&&<button style={{...css.btnOutline,width:"100%",marginTop:12,boxSizing:"border-box"}} onClick={()=>{setMethod("");setError("");}}>← {t.back}</button>}
           </>)}
@@ -516,12 +523,19 @@ function AddPage({t,projects,token,onRefresh,onSaveTemp}){
               </div>
             ))}
             <button style={{...css.btnOutline,width:"100%",marginBottom:12,boxSizing:"border-box"}} onClick={addItem}>{t.addItem}</button>
-            <div style={{marginBottom:12}}><label style={css.label}>{t.amount} 合計（円）（必須）</label><input style={css.input} value={mTotal} placeholder="例：15000" onChange={e=>setMTotal(e.target.value)}/></div>
+            <div style={{marginBottom:6}}>
+              <label style={css.label}>{t.amount} 合計・税込（必須）</label>
+              <div style={{position:"relative"}}>
+                <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"#888",fontSize:15}}>¥</span>
+                <input style={{...css.input,paddingLeft:24}} value={mTotal} placeholder="15,000" onChange={e=>setMTotal(e.target.value.replace(/,/g,""))}/>
+              </div>
+            </div>
+            <TaxDisplay amount={mTotal}/>
             <div style={{marginBottom:12}}><label style={css.label}>備考</label><input style={css.input} value={mMemo} placeholder="任意メモ" onChange={e=>setMMemo(e.target.value)}/></div>
             {error&&<div style={css.errorBox}>{error}</div>}
             {saveStatus===""&&<div style={{display:"flex",gap:10,marginTop:4}}><button style={css.btnOutline} onClick={()=>{setMethod("");setError("");setSave("");}}>← {t.back}</button><button style={{...css.btnPrimary,flex:1,marginTop:0}} onClick={saveManual}>📁 {t.saveToTemp}</button></div>}
             {saveStatus==="saving"&&<button style={{...css.btnPrimary,marginTop:16,opacity:.6}} disabled><span style={css.spinner}/>{t.saving}</button>}
-            {saveStatus==="saved"&&<><div style={css.successBox}>{t.saved}</div><button style={{...css.btnPrimary,marginTop:12}} onClick={reset}>{t.addMore}</button></>}
+            {saveStatus==="saved"&&<><div style={css.successBox}>{t.saved}</div><button style={{...css.btnPrimary,marginTop:12}} onClick={()=>reset(true)}>{t.addMore}</button></>}
           </>)}
         </div>
       )}
@@ -866,7 +880,7 @@ function ProjectList({t,projects,token,onRefresh}){
           {[[t.projectNameRequired,name,setName,"text","田中邸 外壁塗装"],[t.startDate,start,setStart,"date",""],[t.projectNum,num,setNum,"text","2024-001"],[t.person,person,setPerson,"text","日本太郎"]].map(([label,val,setter,type,ph])=>(
             <div key={label} style={{marginBottom:12}}><label style={css.label}>{label}</label><input style={css.input} type={type} value={val} placeholder={ph} onChange={e=>setter(e.target.value)}/></div>
           ))}
-          <div style={{marginBottom:12}}><label style={css.label}>{"工事場所（任意）"}</label><input style={css.input} value={location2} placeholder="例：○○市△△町1-2-3" onChange={e=>setLocation2(e.target.value)}/></div>
+          <div style={{marginBottom:12}}><label style={css.label}>{"工事場所（必須）"}</label><input style={css.input} value={location2} placeholder="例：○○市△△町1-2-3" onChange={e=>setLocation2(e.target.value)}/></div>
           <div style={{marginBottom:6}}><label style={css.label}>{"請負金額・税込（必須）"}</label><input style={css.input} value={contract2} placeholder="例：1650000" onChange={e=>setContract2(e.target.value)}/></div>
           <TaxDisplay amount={contract2}/>
           {error&&<div style={css.errorBox}>{error}</div>}
@@ -1040,7 +1054,15 @@ function CareerPage({t,projects,token,onRefresh}){
             </select>
           </div>
           <div>
-            <SuggestInput label="建設工事の種類" value={workType} onChange={v=>{setWorkType(v);}} placeholder="例：大工" storageKey="koji_worktypes"/>
+            <div>
+              <label style={{fontSize:12,color:"#888",marginBottom:4,display:"block"}}>建設工事の種類</label>
+              <select style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E8E8E8",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit",background:"#FAFAFA"}}
+                value={workType} onChange={e=>setWorkType(e.target.value)}>
+                {["土木","建築","大工","左官","とび・土工・コンクリート","石","屋根","電気","管","タイル・れんが・ブロック","鋼構造物","鉄筋","舗装","しゅんせつ","板金","ガラス","塗装","防水","内装仕上","機械器具設置","熱絶縁","電気通信","造園","さく井","建具","水道施設","消防施設","清掃施設","解体"].map(k=>(
+                  <option key={k} value={k}>{k}工事</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
@@ -1077,7 +1099,7 @@ function CareerPage({t,projects,token,onRefresh}){
                 <span>注文者：{p.orderer||"—"}</span>
                 <span>{p.jv_type||"元請"}</span>
                 <span>場所：{p.location||"—"}</span>
-                <span>請負：{p.contract_amount?`¥${Number(p.contract_amount).toLocaleString()}`:"—"}</span>
+                <span>請負：{p.contract_amount?`¥${Number(String(p.contract_amount).replace(/,/g,"")).toLocaleString()}`:"—"}</span>
                 <span>技術者：{p.engineer_name||"—"}</span>
                 <span>着工：{p.start||"—"}</span>
                 <span>完成：{p.completion_date||"—"}</span>
@@ -1086,8 +1108,12 @@ function CareerPage({t,projects,token,onRefresh}){
                 {p.has_steel&&<span style={{color:"#6A1B9A",fontWeight:600}}>鋼橋上部</span>}
               </div>
             </div>
-            <button style={{padding:"6px 12px",borderRadius:8,background:"#fff",color:"#1A1A1A",border:"1.5px solid #E8E8E8",fontSize:12,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}
-              onClick={()=>startEdit(p)}>✏️ 編集</button>
+            <div style={{display:"flex",gap:6,flexShrink:0}}>
+              <button style={{padding:"6px 12px",borderRadius:8,background:"#fff",color:"#1A1A1A",border:"1.5px solid #E8E8E8",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}
+                onClick={()=>startEdit(p)}>✏️ 編集</button>
+              <button style={{padding:"6px 12px",borderRadius:8,background:"#fff",color:"#C62828",border:"1.5px solid #C62828",fontSize:12,cursor:"pointer",fontFamily:"inherit"}}
+                onClick={async()=>{if(!window.confirm(`「${p.name}」を削除しますか？`))return;try{await apiFetch(`/api/projects/${p.id}`,{method:"DELETE"},token);await onRefresh();}catch(e){alert(e.message);}}}>🗑</button>
+            </div>
           </div>
         ))}
       </div>
