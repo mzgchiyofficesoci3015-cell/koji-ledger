@@ -648,35 +648,18 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
     if not project:
         raise HTTPException(404, "工事が見つかりません")
 
-    # エクスポート済みIDを管理
-    if "exported_records" not in data:
-        data["exported_records"] = {}
-    cache_key = f"{user_id}_{project_id}"
+    if "excel_cache"     not in data: data["excel_cache"]     = {}
+    if "exported_records" not in data: data["exported_records"] = {}
+    if "row_map"         not in data: data["row_map"]         = {}
+
+    cache_key   = f"{user_id}_{project_id}"
     exported_ids = set(data["exported_records"].get(cache_key, []))
-
-    # 未エクスポートのレコードのみ処理（重複防止）
-    new_records = [r for r in records if r.get("record_id") not in exported_ids]
-    if not new_records:
-        # 全て重複 → 既存Excelをそのまま返す
-        if cache_key in data.get("excel_cache", {}):
-            safe_name = project["name"].replace("/", "／")
-            return {"ok": True, "excel_b64": data["excel_cache"][cache_key],
-                    "filename": f"工事台帳_{safe_name}.xlsx", "skipped": len(records), "added": 0}
-        raise HTTPException(400, "エクスポートするデータがありません（全て処理済み）")
-
-    by_cat = {cat: [] for cat in CATEGORIES}
-    for r in new_records:
-        cat = r.get("category")
-        if cat in CATEGORIES:
-            by_cat[cat].append(r.get("ai_result", {}))
+    row_map      = data["row_map"].get(cache_key, {})  # {record_id: {sheet, rows: [row_num,...]}}
 
     safe_name = project["name"].replace("/", "／")
     filename  = f"工事台帳_{safe_name}.xlsx"
 
-    if "excel_cache" not in data:
-        data["excel_cache"] = {}
-    cache_key = f"{user_id}_{project_id}"
-
+    # Excelを読み込み or 新規作成
     if cache_key in data["excel_cache"]:
         wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(data["excel_cache"][cache_key])))
     else:
@@ -687,39 +670,78 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
         for cat in CATEGORIES:
             _setup_cat_sheet(wb.create_sheet(cat), project, cat)
 
-    for cat, ai_list in by_cat.items():
-        if not ai_list:
+    added = 0
+    overwritten = 0
+
+    for r in records:
+        cat       = r.get("category")
+        record_id = r.get("record_id")
+        ai        = r.get("ai_result", {})
+        if cat not in CATEGORIES:
             continue
+
         if cat not in wb.sheetnames:
             _setup_cat_sheet(wb.create_sheet(cat), project, cat)
         ws = wb[cat]
-        row = 4
-        while ws.cell(row=row, column=1).value is not None:
-            row += 1
-        for ai in ai_list:
-            items = ai.get("明細", []) or [{"品名_作業内容":"","数量":None,"単位":None,"単価":None,"金額":ai.get("合計金額",0)}]
-            for item in items:
-                row_data = [ai.get("日付",""), cat, item.get("品名_作業内容",""), item.get("数量"), item.get("単位"), item.get("単価"), item.get("金額") or 0, ai.get("仕入先_外注先",""), ""]
+
+        items = ai.get("明細", []) or [{"品名_作業内容":"","数量":None,"単位":None,"単価":None,"金額":ai.get("合計金額",0)}]
+
+        def write_rows(start_row, item_list):
+            written = []
+            for idx, item in enumerate(item_list):
+                row_num = start_row + idx
+                row_data = [ai.get("日付",""), cat, item.get("品名_作業内容",""),
+                            item.get("数量"), item.get("単位"), item.get("単価"),
+                            item.get("金額") or 0, ai.get("仕入先_外注先",""), ""]
                 for col, val in enumerate(row_data, 1):
-                    c = ws.cell(row=row, column=col, value=val)
-                    c.font = Font(name="游ゴシック", size=10)
+                    c = ws.cell(row=row_num, column=col, value=val)
+                    c.font   = Font(name="游ゴシック", size=10)
                     c.border = _border()
                     if col == 7 and val:
                         c.number_format = "#,##0"
-                row += 1
+                written.append(row_num)
+            return written
+
+        if record_id and record_id in row_map:
+            # 既存行を上書き
+            existing = row_map[record_id]
+            start_row = existing["rows"][0] if existing.get("rows") else None
+            if start_row:
+                # 既存行をクリアして上書き
+                for row_num in existing["rows"]:
+                    for col in range(1, 10):
+                        ws.cell(row=row_num, column=col, value="")
+                written = write_rows(start_row, items)
+                row_map[record_id] = {"sheet": cat, "rows": written}
+                overwritten += 1
+            else:
+                # 行情報なし → 追記
+                next_row = 4
+                while ws.cell(row=next_row, column=1).value is not None:
+                    next_row += 1
+                written = write_rows(next_row, items)
+                row_map[record_id] = {"sheet": cat, "rows": written}
+                added += 1
+        else:
+            # 新規追記
+            next_row = 4
+            while ws.cell(row=next_row, column=1).value is not None:
+                next_row += 1
+            written = write_rows(next_row, items)
+            if record_id:
+                row_map[record_id] = {"sheet": cat, "rows": written}
+                exported_ids.add(record_id)
+            added += 1
 
     buf = io.BytesIO()
     wb.save(buf)
     excel_bytes = buf.getvalue()
-    data["excel_cache"][cache_key] = base64.b64encode(excel_bytes).decode()
-
-    # エクスポート済みIDを記録
-    new_ids = [r["record_id"] for r in new_records if r.get("record_id")]
-    exported_ids.update(new_ids)
+    data["excel_cache"][cache_key]      = base64.b64encode(excel_bytes).decode()
     data["exported_records"][cache_key] = list(exported_ids)
+    data["row_map"][cache_key]          = row_map
     save(data)
     return {"ok": True, "excel_b64": data["excel_cache"][cache_key], "filename": filename,
-            "added": len(new_records), "skipped": len(records) - len(new_records)}
+            "added": added, "overwritten": overwritten}
 
 
 def _build_sheet1(ws, project):
@@ -1049,6 +1071,8 @@ async def reset_export_cache(project_id: str, user_id: str = Depends(verify_toke
         removed = True
     if "exported_records" in data and cache_key in data["exported_records"]:
         del data["exported_records"][cache_key]
+    if "row_map" in data and cache_key in data["row_map"]:
+        del data["row_map"][cache_key]
     save(data)
     return {"ok": True, "reset": removed}
 

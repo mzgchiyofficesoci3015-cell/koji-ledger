@@ -432,9 +432,10 @@ function TempPage({t,projects,tempData,onUpdate,token}){
       URL.revokeObjectURL(url);
       const updated=tempData.map(td=>items.find(i=>i.id===td.id)?{...td,exported:true}:td);
       onUpdate(updated);
-      const msg = d.skipped > 0
-        ? `✅ Excelをダウンロードしました（新規${d.added}件追記・重複${d.skipped}件スキップ）`
-        : `✅ Excelをダウンロードしました（${d.added}件追記）`;
+      const parts = [];
+      if(d.added > 0) parts.push(`新規${d.added}件追記`);
+      if(d.overwritten > 0) parts.push(`${d.overwritten}件上書き`);
+      const msg = `✅ Excelをダウンロードしました（${parts.join("・")||"変更なし"}）`;
       setExportMsg(msg);
       setTimeout(()=>setExportMsg(""),5000);
     }catch(e){alert("エクスポートに失敗しました："+e.message);}
