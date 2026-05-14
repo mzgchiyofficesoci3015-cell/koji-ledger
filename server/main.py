@@ -1,10 +1,4 @@
-"""
-工事台帳 サーバー v3
-- LINEなし・Webアプリ専用
-- JWT認証（ID/パスワード）
-- Claude APIで画像読み取り
-- PCエージェント向けキューAPI
-"""
+"""\n工事台帳 サーバー v3\n- LINEなし・Webアプリ専用\n- JWT認証（ID/パスワード）\n- Claude APIで画像読み取り\n- PCエージェント向けキューAPI\n"""
 import os, json, base64, re, hashlib, secrets, io, tempfile
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -297,49 +291,9 @@ async def ai_read(image_bytes: bytes, category: str, media_type: str = "image/jp
         "不明":   "建築土木工事に関連する領収書・レシート・納品書・請求書",
     }.get(category, "建築土木工事に関連する領収書・レシート・納品書")
 
-    system = """あなたは建築土木業の経理担当として20年以上の経験を持つ専門家です。
-日本の手書き領収書・印刷レシート・納品書・請求書の読み取りに特化しています。
+    system = """あなたは建築土木業の経理担当として20年以上の経験を持つ専門家です。\n日本の手書き領収書・印刷レシート・納品書・請求書の読み取りに特化しています。\n\n【絶対ルール】\n- JSONのみを返す。前置き・説明・```などのコードブロック記号は一切不要\n- 読み取れない項目はnullとし、絶対に推測で埋めない\n- 金額はカンマ・円記号・¥を除いた整数で返す\n- 日付は必ずYYYY-MM-DD形式（和暦→西暦変換必須）\n\n【和暦変換表】\n令和7年=2025年、令和6年=2024年、令和5年=2023年、令和4年=2022年\n令和3年=2021年、令和2年=2020年、令和元年=2019年\n\n【読み取りのコツ】\n- 手書き数字：1と7、6と0、3と8は文脈・桁数から判断\n- 金額は「合計」「小計」「税込」「御請求金額」欄を最優先\n- 複数の金額欄がある場合は最も大きい「税込合計」を合計金額とする\n- 明細が複数行ある場合は全行を抽出する\n- 仕入先は書類の発行元（右上・左上のスタンプ・印刷部分）から読む"""
 
-【絶対ルール】
-- JSONのみを返す。前置き・説明・```などのコードブロック記号は一切不要
-- 読み取れない項目はnullとし、絶対に推測で埋めない
-- 金額はカンマ・円記号・¥を除いた整数で返す
-- 日付は必ずYYYY-MM-DD形式（和暦→西暦変換必須）
-
-【和暦変換表】
-令和7年=2025年、令和6年=2024年、令和5年=2023年、令和4年=2022年
-令和3年=2021年、令和2年=2020年、令和元年=2019年
-
-【読み取りのコツ】
-- 手書き数字：1と7、6と0、3と8は文脈・桁数から判断
-- 金額は「合計」「小計」「税込」「御請求金額」欄を最優先
-- 複数の金額欄がある場合は最も大きい「税込合計」を合計金額とする
-- 明細が複数行ある場合は全行を抽出する
-- 仕入先は書類の発行元（右上・左上のスタンプ・印刷部分）から読む"""
-
-    prompt_1st = f"""【書類の種類】{cat_hint}
-
-この画像を注意深く観察し、以下のJSON形式のみで返してください。
-
-{{
-  "日付": "YYYY-MM-DD または null",
-  "費目": "{category}",
-  "明細": [
-    {{
-      "品名_作業内容": "文字列 または null",
-      "数量": 数値またはnull,
-      "単位": "個・本・袋・m・m²・m³・式・人・日・時間 など または null",
-      "単価": 数値またはnull,
-      "金額": 数値またはnull
-    }}
-  ],
-  "合計金額": 数値またはnull,
-  "消費税": 数値またはnull,
-  "仕入先_外注先": "店名・会社名・個人名 または null",
-  "読み取り信頼度": "高 または 中 または 低",
-  "不明瞭箇所": ["読み取りに自信がない項目名をリストで"],
-  "備考": "特記事項 または null"
-}}"""
+    prompt_1st = f"""【書類の種類】{cat_hint}\n\nこの画像を注意深く観察し、以下のJSON形式のみで返してください。\n\n{{\n  "日付": "YYYY-MM-DD または null",\n  "費目": "{category}",\n  "明細": [\n    {{\n      "品名_作業内容": "文字列 または null",\n      "数量": 数値またはnull,\n      "単位": "個・本・袋・m・m²・m³・式・人・日・時間 など または null",\n      "単価": 数値またはnull,\n      "金額": 数値またはnull\n    }}\n  ],\n  "合計金額": 数値またはnull,\n  "消費税": 数値またはnull,\n  "仕入先_外注先": "店名・会社名・個人名 または null",\n  "読み取り信頼度": "高 または 中 または 低",\n  "不明瞭箇所": ["読み取りに自信がない項目名をリストで"],\n  "備考": "特記事項 または null"\n}}"""
 
     # 1回目の読み取り
     # PDF・画像どちらも対応
@@ -348,10 +302,7 @@ async def ai_read(image_bytes: bytes, category: str, media_type: str = "image/jp
     else:
         file_content = {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}}
 
-    rotation_hint = """
-- 画像が横向き・逆さ・斜めになっていても、書類の内容から正しい向きを判断して読み取ってください
-- 書類の向きは文字の方向・金額の位置・日付の位置から判断してください
-- 向きを補正した上で全ての情報を読み取ってください"""
+    rotation_hint = """\n- 画像が横向き・逆さ・斜めになっていても、書類の内容から正しい向きを判断して読み取ってください\n- 書類の向きは文字の方向・金額の位置・日付の位置から判断してください\n- 向きを補正した上で全ての情報を読み取ってください"""
 
     msg1 = client.messages.create(
         model="claude-opus-4-5",
@@ -374,14 +325,7 @@ async def ai_read(image_bytes: bytes, category: str, media_type: str = "image/jp
 
     if confidence in ["低", "中"] and unclear:
         unclear_str = "・".join(unclear)
-        prompt_2nd = f"""この画像をもう一度注意深く見てください。
-特に「{unclear_str}」の部分が不明瞭でした。
-
-前回の読み取り結果：
-{json.dumps(result, ensure_ascii=False, indent=2)}
-
-上記の不明瞭だった箇所に集中して再確認し、より正確な値に修正したJSONのみを返してください。
-確信が持てない場合はnullのままにしてください。"""
+        prompt_2nd = f"""この画像をもう一度注意深く見てください。\n特に「{unclear_str}」の部分が不明瞭でした。\n\n前回の読み取り結果：\n{json.dumps(result, ensure_ascii=False, indent=2)}\n\n上記の不明瞭だった箇所に集中して再確認し、より正確な値に修正したJSONのみを返してください。\n確信が持てない場合はnullのままにしてください。"""
 
         msg2 = client.messages.create(
             model="claude-opus-4-5",
@@ -780,15 +724,11 @@ def _build_sheet1(ws, project):
     m(1,1,1,14); s(1,1,"工　事　台　帳",bold=True,size=14,h="center",border=False)
 
     # 工事番号・工事名・工事場所
-    m(2,1,2,2); s(2,1,"工事
-番号",h="center",bg=HDR,wrap=True,size=7)
+    m(2,1,2,2); s(2,1,"工事\n番号",h="center",bg=HDR,wrap=True,size=7)
     m(2,3,2,5); s(2,3,project.get("num",""),size=9)
-    m(2,6,3,6); s(2,6,"工
-事
-名",h="center",bg=HDR,wrap=True,size=7)
+    m(2,6,3,6); s(2,6,"工\n事\n名",h="center",bg=HDR,wrap=True,size=7)
     m(2,7,2,10); s(2,7,project.get("name",""),bold=True,size=10)
-    m(2,11,2,11); s(2,11,"工事
-場所",h="center",bg=HDR,wrap=True,size=7)
+    m(2,11,2,11); s(2,11,"工事\n場所",h="center",bg=HDR,wrap=True,size=7)
     m(2,12,2,14); s(2,12,project.get("location",""),size=9)
 
     m(3,1,3,2); s(3,1,"",bg=HDR)
@@ -798,9 +738,7 @@ def _build_sheet1(ws, project):
     s(3,14,"",bg=HDR,size=7)
 
     # 発注者
-    m(4,1,6,2); s(4,1,"発
-注
-者",h="center",bg=HDR,wrap=True,size=8)
+    m(4,1,6,2); s(4,1,"発\n注\n者",h="center",bg=HDR,wrap=True,size=8)
     m(4,3,4,4); s(4,3,"名称",h="center",bg=HDR,size=8)
     m(4,5,4,9); s(4,5,project.get("orderer",""),size=9)
     s(4,10,"担当者",h="center",bg=HDR,size=7)
@@ -813,40 +751,28 @@ def _build_sheet1(ws, project):
     m(6,5,6,8); s(6,5,"",size=9)
     s(6,9,"確認番号",h="center",bg=HDR,size=7)
     m(6,10,6,11); s(6,10,f"第　　号",size=8)
-    s(6,12,"確認
-年月日",h="center",bg=HDR,size=7,wrap=True)
+    s(6,12,"確認\n年月日",h="center",bg=HDR,size=7,wrap=True)
     m(6,13,6,14); s(6,13,"",size=9)
 
     # 工期
-    m(7,1,7,2); s(7,1,"契約
-年月日",h="center",bg=HDR,wrap=True,size=7)
+    m(7,1,7,2); s(7,1,"契約\n年月日",h="center",bg=HDR,wrap=True,size=7)
     m(7,3,7,4); s(7,3,project.get("start",""),size=8)
-    m(7,5,7,5); s(7,5,"着工
-年月日",h="center",bg=HDR,wrap=True,size=7)
-    s(7,6,"予定
-実行",h="center",bg=HDR,wrap=True,size=7)
+    m(7,5,7,5); s(7,5,"着工\n年月日",h="center",bg=HDR,wrap=True,size=7)
+    s(7,6,"予定\n実行",h="center",bg=HDR,wrap=True,size=7)
     m(7,7,7,7); s(7,7,project.get("start",""),size=8)
-    m(7,8,7,8); s(7,8,"竣工
-年月日",h="center",bg=HDR,wrap=True,size=7)
-    s(7,9,"予定
-実行",h="center",bg=HDR,wrap=True,size=7)
+    m(7,8,7,8); s(7,8,"竣工\n年月日",h="center",bg=HDR,wrap=True,size=7)
+    s(7,9,"予定\n実行",h="center",bg=HDR,wrap=True,size=7)
     m(7,10,7,10); s(7,10,project.get("completion_date",""),size=8)
-    s(7,11,"引渡
-年月日",h="center",bg=HDR,wrap=True,size=7)
-    s(7,12,"予定
-実行",h="center",bg=HDR,wrap=True,size=7)
+    s(7,11,"引渡\n年月日",h="center",bg=HDR,wrap=True,size=7)
+    s(7,12,"予定\n実行",h="center",bg=HDR,wrap=True,size=7)
     m(7,13,7,14); s(7,13,project.get("completion_date",""),size=8)
 
     # 工事概要
-    m(8,1,8,2); s(8,1,"工事
-概要",h="center",bg=HDR,wrap=True,size=8)
+    m(8,1,8,2); s(8,1,"工事\n概要",h="center",bg=HDR,wrap=True,size=8)
     m(8,3,8,14); s(8,3,"",wrap=True)
 
     # 請負金額セクション
-    m(9,1,12,2); s(9,1,"請
-負
-金
-額",h="center",bg=HDR,wrap=True,size=8)
+    m(9,1,12,2); s(9,1,"請\n負\n金\n額",h="center",bg=HDR,wrap=True,size=8)
     for col,label in [(3,"月/日"),(4,"摘　要"),(5,""),(6,"金　額"),(7,"月/日"),(8,"摘　要"),(9,""),(10,"金　額"),(11,"月/日"),(12,"摘　要"),(13,""),(14,"金　額")]:
         s(9,col,label,h="center",bg=HDR,size=8)
     for r in range(10,13):
@@ -855,8 +781,7 @@ def _build_sheet1(ws, project):
             s(r,c,"",size=9)
 
     # 支払条件
-    m(13,1,13,2); s(13,1,"支払
-条件",h="center",bg=HDR,wrap=True,size=8)
+    m(13,1,13,2); s(13,1,"支払\n条件",h="center",bg=HDR,wrap=True,size=8)
     m(13,3,13,14); s(13,3,"",wrap=True)
 
     # 請求・受入セクション
@@ -890,19 +815,14 @@ def _build_sheet1(ws, project):
     m(bot,5,bot,14); s(bot,5,"請　負　金　額　の　内　訳",h="center",bg=HDR,size=8)
 
     m(bot+1,1,bot+2,1); s(bot+1,1,"府県",h="center",bg=HDR,size=7)
-    m(bot+1,2,bot+2,2); s(bot+1,2,"所掌
-管轄",h="center",bg=HDR,wrap=True,size=7)
-    m(bot+1,3,bot+2,3); s(bot+1,3,"基幹
-番号",h="center",bg=HDR,wrap=True,size=7)
+    m(bot+1,2,bot+2,2); s(bot+1,2,"所掌\n管轄",h="center",bg=HDR,wrap=True,size=7)
+    m(bot+1,3,bot+2,3); s(bot+1,3,"基幹\n番号",h="center",bg=HDR,wrap=True,size=7)
     m(bot+1,4,bot+2,4); s(bot+1,4,"枝番号",h="center",bg=HDR,size=7,wrap=True)
     m(bot+1,5,bot+2,6); s(bot+1,5,"請負代金の額",h="center",bg=HDR,size=7,wrap=True)
-    m(bot+1,7,bot+2,9); s(bot+1,7,"請負代金に
-加算する額",h="center",bg=HDR,size=7,wrap=True)
-    m(bot+1,10,bot+2,11); s(bot+1,10,"請負代金から
-控除する額",h="center",bg=HDR,size=7,wrap=True)
+    m(bot+1,7,bot+2,9); s(bot+1,7,"請負代金に\n加算する額",h="center",bg=HDR,size=7,wrap=True)
+    m(bot+1,10,bot+2,11); s(bot+1,10,"請負代金から\n控除する額",h="center",bg=HDR,size=7,wrap=True)
     m(bot+1,12,bot+2,13); s(bot+1,12,"請負金額",h="center",bg=HDR,size=8,wrap=True)
-    m(bot+1,14,bot+2,14); s(bot+1,14,"労務
-費率",h="center",bg=HDR,wrap=True,size=7)
+    m(bot+1,14,bot+2,14); s(bot+1,14,"労務\n費率",h="center",bg=HDR,wrap=True,size=7)
 
     for c in [1,2,3,4]:
         m(bot+3,c,bot+4,c); s(bot+3,c,"",size=9)
@@ -990,7 +910,8 @@ def _build_sheet2(ws, project):
         c1.alignment = Aln(horizontal="center",vertical="center")
         c1.border = bdr
         # 費目シートが存在する場合のみSUMIF
-        c2 = ws.cell(row=row,column=2,value=f"=IFERROR(SUMPRODUCT(('{cat}'!B4:B2000="{cat}")*'{cat}'!G4:G2000),0)")
+        formula = f"=IFERROR(SUMPRODUCT(('{cat}'!B4:B2000=\"{cat}\")*'{cat}'!G4:G2000),0)"
+        c2 = ws.cell(row=row,column=2,value=formula)
         c2.font = Font(name="游ゴシック",size=10)
         c2.number_format = "#,##0"
         c2.alignment = Aln(horizontal="right",vertical="center")
@@ -1179,9 +1100,7 @@ def build_career_excel(projects, year, company, permit, work_type):
     # 右側：決算期間・許可番号・申請者
     period_start = f"令和{int(str(year)[2:])if year else ''}年01月01日" if year else ""
     period_end   = f"令和{int(str(year)[2:])if year else ''}年12月31日" if year else ""
-    ws["I2"] = f"決算期間　{period_start}〜{period_end}
-許可番号　{permit}
-申請者　　{company}"
+    ws["I2"] = f"決算期間　{period_start}〜{period_end}\n許可番号　{permit}\n申請者　　{company}"
     ws["I2"].font = Font(name="游ゴシック", size=8)
     ws["I2"].alignment = Aln(horizontal="left", vertical="center", wrap_text=True)
     merge(2, 9, 2, 14)
@@ -1197,49 +1116,32 @@ def build_career_excel(projects, year, company, permit, work_type):
         ws.row_dimensions[r].height = 20
 
     # 注文者
-    merge(4, 1, 6, 1); b(4, 1, "注
-文
-者", bold=True, bg=HDR_BG, wrap=True)
+    merge(4, 1, 6, 1); b(4, 1, "注\n文\n者", bold=True, bg=HDR_BG, wrap=True)
     # 元請又は下請の別
-    merge(4, 2, 6, 2); b(4, 2, "元請
-又は
-下請
-の別", bold=True, bg=HDR_BG, size=7, wrap=True)
+    merge(4, 2, 6, 2); b(4, 2, "元請\n又は\n下請\nの別", bold=True, bg=HDR_BG, size=7, wrap=True)
     # JVの別
-    merge(4, 3, 6, 3); b(4, 3, "J
-V
-の
-別", bold=True, bg=HDR_BG, size=7, wrap=True)
+    merge(4, 3, 6, 3); b(4, 3, "J\nV\nの\n別", bold=True, bg=HDR_BG, size=7, wrap=True)
     # 工事名
     merge(4, 4, 6, 4); b(4, 4, "工　　　事　　　名", bold=True, bg=HDR_BG)
     # 工事場所
-    merge(4, 5, 6, 5); b(4, 5, "工事現場のある
-都道府県及び市
-区町村名", bold=True, bg=HDR_BG, size=7, wrap=True)
+    merge(4, 5, 6, 5); b(4, 5, "工事現場のある\n都道府県及び市\n区町村名", bold=True, bg=HDR_BG, size=7, wrap=True)
     # 配置技術者
     merge(4, 6, 4, 7); b(4, 6, "配　置　技　術　者", bold=True, bg=HDR_BG)
     b(5, 6, "氏　名", bold=True, bg=HDR_BG)
-    b(5, 7, "主任技術者又は監理技術者
-の別（該当箇所にレ印を記載）", bold=True, bg=HDR_BG, size=6, wrap=True)
+    b(5, 7, "主任技術者又は監理技術者\nの別（該当箇所にレ印を記載）", bold=True, bg=HDR_BG, size=6, wrap=True)
     b(6, 6, "主任技術者", bold=True, bg=HDR_BG, size=7)
     b(6, 7, "監理技術者", bold=True, bg=HDR_BG, size=7)
     # 請負代金の額
     merge(4, 8, 4, 11); b(4, 8, "請　負　代　金　の　額", bold=True, bg=HDR_BG)
     merge(5, 8, 6, 8); b(5, 8, "（千円）", bold=True, bg=HDR_BG, size=7)
-    merge(5, 9, 5, 11); b(5, 9, "うち、
-・ＰＣ
-・法面処理
-・鋼橋上部", bold=True, bg=HDR_BG, size=6, wrap=True)
+    merge(5, 9, 5, 11); b(5, 9, "うち、\n・ＰＣ\n・法面処理\n・鋼橋上部", bold=True, bg=HDR_BG, size=6, wrap=True)
     b(6, 9, "ＰＣ", bold=True, bg=HDR_BG, size=7)
-    b(6, 10, "法面
-処理", bold=True, bg=HDR_BG, size=7, wrap=True)
-    b(6, 11, "鋼橋
-上部", bold=True, bg=HDR_BG, size=7, wrap=True)
+    b(6, 10, "法面\n処理", bold=True, bg=HDR_BG, size=7, wrap=True)
+    b(6, 11, "鋼橋\n上部", bold=True, bg=HDR_BG, size=7, wrap=True)
     # 工期
     merge(4, 12, 4, 14); b(4, 12, "工　　　　　期", bold=True, bg=HDR_BG)
     merge(5, 12, 6, 12); b(5, 12, "着工年月", bold=True, bg=HDR_BG, size=7)
-    merge(5, 13, 6, 14); b(5, 13, "完成又は
-完成予定年月", bold=True, bg=HDR_BG, size=7, wrap=True)
+    merge(5, 13, 6, 14); b(5, 13, "完成又は\n完成予定年月", bold=True, bg=HDR_BG, size=7, wrap=True)
 
     # ── データ行（7行目〜） ──
     ROW_START = 7
