@@ -584,11 +584,62 @@ def build_excel(project: dict, category: str, records: list) -> bytes:
     wb.save(buf)
     return buf.getvalue()
 
+def _create_new_workbook(project):
+    """新規Excelワークブックを作成"""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    try:
+        _build_sheet1(wb.create_sheet("工事台帳", 0), project)
+    except Exception as e:
+        print(f"sheet1 error: {e}")
+        wb.create_sheet("工事台帳", 0)
+    try:
+        _build_sheet2(wb.create_sheet("集計", 1), project)
+    except Exception as e:
+        print(f"sheet2 error: {e}")
+        wb.create_sheet("集計", 1)
+    for cat in CATEGORIES:
+        try:
+            _setup_cat_sheet(wb.create_sheet(cat), project, cat)
+        except Exception as e:
+            print(f"cat sheet {cat} error: {e}")
+            wb.create_sheet(cat)
+    return wb
+
+
+def _write_rows_to_sheet(ws, start_row, items, ai, cat):
+    """費目シートに行を書き込む"""
+    written = []
+    for idx, item in enumerate(items):
+        row_num = start_row + idx
+        row_data = [
+            ai.get("日付", ""),
+            cat,
+            item.get("品名_作業内容", "") or "",
+            item.get("数量"),
+            item.get("単位"),
+            item.get("単価"),
+            item.get("金額") or 0,
+            ai.get("仕入先_外注先", "") or "",
+            "",
+        ]
+        for col, val in enumerate(row_data, 1):
+            c = ws.cell(row=row_num, column=col, value=val)
+            c.font   = Font(name="游ゴシック", size=10)
+            c.border = _border()
+            if col == 7 and val:
+                c.number_format = "#,##0"
+        written.append(row_num)
+    return written
+
+
+
 @app.post("/api/records/export")
 async def export_records(request: Request, user_id: str = Depends(verify_token)):
+    import traceback as tb
     body       = await request.json()
     project_id = body.get("project_id")
-    records    = body.get("records", [])   # [{category, ai_result, record_id}, ...]
+    records    = body.get("records", [])
 
     if not project_id or not records:
         raise HTTPException(400, "project_id・records は必須です")
@@ -598,45 +649,26 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
     if not project:
         raise HTTPException(404, "工事が見つかりません")
 
-    if "excel_cache"     not in data: data["excel_cache"]     = {}
+    if "excel_cache"      not in data: data["excel_cache"]      = {}
     if "exported_records" not in data: data["exported_records"] = {}
-    if "row_map"         not in data: data["row_map"]         = {}
+    if "row_map"          not in data: data["row_map"]          = {}
 
-    cache_key   = f"{user_id}_{project_id}"
+    cache_key    = f"{user_id}_{project_id}"
     exported_ids = set(data["exported_records"].get(cache_key, []))
-    row_map      = data["row_map"].get(cache_key, {})  # {record_id: {sheet, rows: [row_num,...]}}
+    row_map      = data["row_map"].get(cache_key, {})
 
     safe_name = project["name"].replace("/", "／")
     filename  = f"工事台帳_{safe_name}.xlsx"
 
-    # Excelを読み込み or 新規作成
+    # Excelを新規作成（毎回シンプルに新規作成してキャッシュに追記）
     try:
-        if cache_key in data["excel_cache"]:
+        if cache_key in data["excel_cache"] and data["excel_cache"][cache_key]:
             wb = openpyxl.load_workbook(io.BytesIO(base64.b64decode(data["excel_cache"][cache_key])))
         else:
-            raise KeyError("new")
-    except Exception:
-        # キャッシュが壊れているか存在しない場合は新規作成
-        if cache_key in data.get("excel_cache", {}):
-            del data["excel_cache"][cache_key]
-        wb = openpyxl.Workbook()
-        wb.remove(wb.active)
-        try:
-            _build_sheet1(wb.create_sheet("工事台帳", 0), project)
-        except Exception as e:
-            print(f"sheet1 error: {e}")
-            wb.create_sheet("工事台帳", 0)
-        try:
-            _build_sheet2(wb.create_sheet("集計", 1), project)
-        except Exception as e:
-            print(f"sheet2 error: {e}")
-            wb.create_sheet("集計", 1)
-        for cat in CATEGORIES:
-            try:
-                _setup_cat_sheet(wb.create_sheet(cat), project, cat)
-            except Exception as e:
-                print(f"cat sheet error {cat}: {e}")
-                wb.create_sheet(cat)
+            wb = _create_new_workbook(project)
+    except Exception as e:
+        print(f"Workbook load error, creating new: {e}")
+        wb = _create_new_workbook(project)
 
     added = 0
     overwritten = 0
@@ -644,58 +676,30 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
     for r in records:
         cat       = r.get("category")
         record_id = r.get("record_id")
-        ai        = r.get("ai_result", {})
+        ai        = r.get("ai_result") or {}
         if cat not in CATEGORIES:
             continue
-
         if cat not in wb.sheetnames:
             _setup_cat_sheet(wb.create_sheet(cat), project, cat)
         ws = wb[cat]
+        items = ai.get("明細") or [{"品名_作業内容":"","数量":None,"単位":None,"単価":None,"金額":ai.get("合計金額",0)}]
+        if not items:
+            items = [{"品名_作業内容":"","数量":None,"単位":None,"単価":None,"金額":ai.get("合計金額",0)}]
 
-        items = ai.get("明細", []) or [{"品名_作業内容":"","数量":None,"単位":None,"単価":None,"金額":ai.get("合計金額",0)}]
-
-        def write_rows(start_row, item_list):
-            written = []
-            for idx, item in enumerate(item_list):
-                row_num = start_row + idx
-                row_data = [ai.get("日付",""), cat, item.get("品名_作業内容",""),
-                            item.get("数量"), item.get("単位"), item.get("単価"),
-                            item.get("金額") or 0, ai.get("仕入先_外注先",""), ""]
-                for col, val in enumerate(row_data, 1):
-                    c = ws.cell(row=row_num, column=col, value=val)
-                    c.font   = Font(name="游ゴシック", size=10)
-                    c.border = _border()
-                    if col == 7 and val:
-                        c.number_format = "#,##0"
-                written.append(row_num)
-            return written
-
-        if record_id and record_id in row_map:
-            # 既存行を上書き
-            existing = row_map[record_id]
-            start_row = existing["rows"][0] if existing.get("rows") else None
-            if start_row:
-                # 既存行をクリアして上書き
-                for row_num in existing["rows"]:
-                    for col in range(1, 10):
-                        ws.cell(row=row_num, column=col, value="")
-                written = write_rows(start_row, items)
-                row_map[record_id] = {"sheet": cat, "rows": written}
-                overwritten += 1
-            else:
-                # 行情報なし → 追記
-                next_row = 4
-                while ws.cell(row=next_row, column=1).value is not None:
-                    next_row += 1
-                written = write_rows(next_row, items)
-                row_map[record_id] = {"sheet": cat, "rows": written}
-                added += 1
+        # 上書き or 追記
+        if record_id and record_id in row_map and row_map[record_id].get("rows"):
+            start_row = row_map[record_id]["rows"][0]
+            for rn in row_map[record_id]["rows"]:
+                for col in range(1, 10):
+                    ws.cell(row=rn, column=col, value="")
+            written = _write_rows_to_sheet(ws, start_row, items, ai, cat)
+            row_map[record_id] = {"sheet": cat, "rows": written}
+            overwritten += 1
         else:
-            # 新規追記
             next_row = 4
-            while ws.cell(row=next_row, column=1).value is not None:
+            while ws.cell(row=next_row, column=1).value not in (None, ""):
                 next_row += 1
-            written = write_rows(next_row, items)
+            written = _write_rows_to_sheet(ws, next_row, items, ai, cat)
             if record_id:
                 row_map[record_id] = {"sheet": cat, "rows": written}
                 exported_ids.add(record_id)
@@ -706,16 +710,15 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
         wb.save(buf)
         excel_bytes = buf.getvalue()
     except Exception as e:
-        import traceback
-        print(f"Excel save error: {traceback.format_exc()}")
-        raise HTTPException(500, f"Excel生成に失敗しました: {str(e)}")
+        print(f"Excel save error: {tb.format_exc()}")
+        raise HTTPException(500, f"Excel生成エラー: {str(e)}")
 
     data["excel_cache"][cache_key]      = base64.b64encode(excel_bytes).decode()
     data["exported_records"][cache_key] = list(exported_ids)
     data["row_map"][cache_key]          = row_map
     save(data)
-    return {"ok": True, "excel_b64": data["excel_cache"][cache_key], "filename": filename,
-            "added": added, "overwritten": overwritten}
+    return {"ok": True, "excel_b64": data["excel_cache"][cache_key],
+            "filename": filename, "added": added, "overwritten": overwritten}
 
 
 def _build_sheet1(ws, project):
