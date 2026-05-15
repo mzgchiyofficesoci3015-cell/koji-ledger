@@ -592,9 +592,7 @@ function TempPage({t,projects,tempData,onUpdate,token}){
       setTimeout(()=>setExportMsg(""),5000);
     }catch(e){
       console.error(e);
-      alert("エクスポートに失敗しました："+e.message+"
-
-詳細はブラウザのコンソールを確認してください");
+      alert("エクスポートに失敗しました："+e.message);
     }
   };
 
