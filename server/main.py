@@ -584,14 +584,15 @@ def build_excel(project: dict, category: str, records: list) -> bytes:
     wb.save(buf)
     return buf.getvalue()
 
-def _create_new_workbook(project):
+def _create_new_workbook(project, all_records=None):
     """新規Excelワークブックを作成"""
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
     try:
-        _build_sheet1(wb.create_sheet("工事台帳", 0), project)
+        _build_sheet1(wb.create_sheet("工事台帳", 0), project, all_records)
     except Exception as e:
         print(f"sheet1 error: {e}")
+        import traceback; print(traceback.format_exc())
         wb.create_sheet("工事台帳", 0)
     try:
         _build_sheet2(wb.create_sheet("集計", 1), project)
@@ -705,6 +706,35 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
                 exported_ids.add(record_id)
             added += 1
 
+    # 全レコードを収集してsheet1の明細一覧を更新
+    try:
+        all_recs_for_sheet1 = []
+        for cat in CATEGORIES:
+            if cat in wb.sheetnames:
+                ws_cat = wb[cat]
+                # シートから既存データを読み取るのは複雑なため、今回のrecordsを使用
+                pass
+        # 今回エクスポートしたrecordsでsheet1を再構築
+        if "工事台帳" in wb.sheetnames:
+            del wb["工事台帳"]
+        # 全履歴レコード（今回 + 過去）を取得
+        all_export_records = []
+        for rid, rinfo in row_map.items():
+            cat2 = rinfo.get("sheet","")
+            # 今回のrecordsから対応するai_resultを探す
+            for r2 in records:
+                if r2.get("record_id") == rid:
+                    all_export_records.append({"category": cat2, "ai_result": r2.get("ai_result",{})})
+                    break
+        # 今回のrecords（row_mapにないもの含む）を追加
+        for r2 in records:
+            if r2.get("record_id") not in row_map:
+                all_export_records.append({"category": r2.get("category",""), "ai_result": r2.get("ai_result",{})})
+        ws1 = wb.create_sheet("工事台帳", 0)
+        _build_sheet1(ws1, project, all_export_records if all_export_records else records)
+    except Exception as e:
+        print(f"sheet1 rebuild error: {tb.format_exc()}")
+
     try:
         buf = io.BytesIO()
         wb.save(buf)
@@ -721,8 +751,8 @@ async def export_records(request: Request, user_id: str = Depends(verify_token))
             "filename": filename, "added": added, "overwritten": overwritten}
 
 
-def _build_sheet1(ws, project):
-    """シート1：工事台帳（テンプレートフォーマット）A4縦"""
+def _build_sheet1(ws, project, all_records=None):
+    """シート1：工事台帳（テンプレートフォーマット）A4縦 + 全費目明細一覧"""
     from openpyxl.styles import Alignment as Aln
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.page_setup.orientation = "portrait"
@@ -894,6 +924,64 @@ def _build_sheet1(ws, project):
     m(bot+3,14,bot+4,14); s(bot+3,14,"",size=9)
     ws.print_area = f"A1:N{bot+4}"
 
+    # ── 全費目明細一覧セクション（請負金額内訳の下に追記） ──
+    if all_records:
+        from openpyxl.styles import Alignment as Aln2
+        detail_start = bot + 6
+        ws.row_dimensions[detail_start].height = 20
+
+        # セクションタイトル
+        ws.merge_cells(start_row=detail_start, start_column=1, end_row=detail_start, end_column=14)
+        tc = ws.cell(row=detail_start, column=1, value="■ 原価明細一覧")
+        tc.font = Font(name="游ゴシック", bold=True, size=11, color="FFFFFF")
+        tc.fill = PatternFill("solid", fgColor="333333")
+        tc.alignment = Aln2(horizontal="left", vertical="center")
+        sd2 = Side(style="thin")
+        tc.border = Border(left=sd2,right=sd2,top=sd2,bottom=sd2)
+
+        # ヘッダー
+        detail_hdr = detail_start + 1
+        ws.row_dimensions[detail_hdr].height = 18
+        hdr_labels = ["費目","日付","品名・作業内容","数量","単位","単価","金額","仕入先・外注先","備考"]
+        hdr_widths = [10, 12, 35, 8, 6, 10, 12, 20, 20]
+        for ci, (lbl, wid) in enumerate(zip(hdr_labels, hdr_widths), 1):
+            c = ws.cell(row=detail_hdr, column=ci, value=lbl)
+            c.font = Font(name="游ゴシック", bold=True, size=9, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="555555")
+            c.alignment = Aln2(horizontal="center", vertical="center")
+            c.border = Border(left=sd2,right=sd2,top=sd2,bottom=sd2)
+            ws.column_dimensions[get_column_letter(ci)].width = wid
+
+        # データ行
+        drow = detail_hdr + 1
+        CAT_ORDER = ["材料費","人件費","外注費","経費"]
+        for cat in CAT_ORDER:
+            cat_recs = [r for r in all_records if r.get("category") == cat]
+            for r in cat_recs:
+                ai = r.get("ai_result") or {}
+                items = ai.get("明細") or [{"品名_作業内容":"","数量":None,"単位":None,"単価":None,"金額":ai.get("合計金額",0)}]
+                for item in items:
+                    ws.row_dimensions[drow].height = 15
+                    row_vals = [
+                        cat, ai.get("日付",""),
+                        item.get("品名_作業内容","") or "",
+                        item.get("数量"), item.get("単位"), item.get("単価"),
+                        item.get("金額") or 0,
+                        ai.get("仕入先_外注先","") or "", ""
+                    ]
+                    for ci, val in enumerate(row_vals, 1):
+                        c = ws.cell(row=drow, column=ci, value=val)
+                        c.font = Font(name="游ゴシック", size=9)
+                        c.border = Border(left=sd2,right=sd2,top=sd2,bottom=sd2)
+                        if ci == 7 and val:
+                            c.number_format = "#,##0"
+                        # 費目列の色分け（グレー）
+                        if ci == 1:
+                            c.fill = PatternFill("solid", fgColor="F0F0F0")
+                    drow += 1
+
+        ws.print_area = f"A1:I{drow-1}"
+
 
 def _build_sheet2(ws, project):
     """シート2：集計シート（材料費・人件費・外注費・経費）A4縦"""
@@ -975,13 +1063,15 @@ def _build_sheet2(ws, project):
     except:
         amt = 0
     try:
-        amt_ex = int(str(project.get("contract_amount_ex","0")).replace(",","").replace("円",""))
+        _ex_raw = project.get("contract_amount_ex","")
+        amt_ex = int(str(_ex_raw).replace(",","").replace("円","")) if _ex_raw else (amt - round(amt*10/110))
     except:
-        amt_ex = 0
+        amt_ex = amt - round(amt*10/110)
     try:
-        tax = int(str(project.get("contract_amount_tax","0")).replace(",","").replace("円",""))
+        _tx_raw = project.get("contract_amount_tax","")
+        tax = int(str(_tx_raw).replace(",","").replace("円","")) if _tx_raw else round(amt*10/110)
     except:
-        tax = 0
+        tax = round(amt*10/110)
 
     for r_offset, label, val in [(0,"請負金額（税込）",amt),(1,"消費税を除く額",amt_ex),(2,"消費税額",tax)]:
         ws.row_dimensions[row+r_offset].height = 18
