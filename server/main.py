@@ -522,8 +522,8 @@ async def read_temp_record(request: Request, user_id: str = Depends(verify_token
 # 一時保管からエクスポート → Excelをブラウザにダウンロード
 # =========================================================
 
-def _border():
-    s = Side(style="thin", color="CCCCCC")
+def _border(color="AAAAAA"):
+    s = Side(style="thin", color=color)
     return Border(left=s, right=s, top=s, bottom=s)
 
 def build_excel(project: dict, category: str, records: list) -> bytes:
@@ -611,6 +611,8 @@ def _create_new_workbook(project, all_records=None):
 def _write_rows_to_sheet(ws, start_row, items, ai, cat):
     """費目シートに行を書き込む"""
     written = []
+    sd = Side(style="thin", color="AAAAAA")
+    bdr = Border(left=sd, right=sd, top=sd, bottom=sd)
     for idx, item in enumerate(items):
         row_num = start_row + idx
         row_data = [
@@ -624,12 +626,20 @@ def _write_rows_to_sheet(ws, start_row, items, ai, cat):
             ai.get("仕入先_外注先", "") or "",
             "",
         ]
+        # 偶数行にストライプ
+        stripe = row_num % 2 == 0
         for col, val in enumerate(row_data, 1):
             c = ws.cell(row=row_num, column=col, value=val)
-            c.font   = Font(name="游ゴシック", size=10)
-            c.border = _border()
+            c.font = Font(name="游ゴシック", size=10)
+            c.border = bdr
+            if stripe:
+                c.fill = PatternFill("solid", fgColor="F9F9F9")
             if col == 7 and val:
                 c.number_format = "#,##0"
+                c.alignment = Alignment(horizontal="right")
+            if col in (4, 5, 6):
+                c.alignment = Alignment(horizontal="right")
+            ws.row_dimensions[row_num].height = 16
         written.append(row_num)
     return written
 
@@ -765,9 +775,21 @@ def _build_sheet1(ws, project, all_records=None):
         if bg:
             c.fill = PatternFill("solid", fgColor=bg)
         if border:
-            sd = Side(style="thin")
+            sd = Side(style="thin", color="888888")
             c.border = Border(left=sd, right=sd, top=sd, bottom=sd)
         return c
+
+    def apply_border_to_merge(r1, c1, r2, c2):
+        """mergeセル範囲の全セルにborderを適用"""
+        sd = Side(style="thin", color="888888")
+        for r in range(r1, r2+1):
+            for c in range(c1, c2+1):
+                cell = ws.cell(row=r, column=c)
+                left   = sd if c == c1 else Side(style=None)
+                right  = sd if c == c2 else Side(style=None)
+                top    = sd if r == r1 else Side(style=None)
+                bottom = sd if r == r2 else Side(style=None)
+                cell.border = Border(left=left, right=right, top=top, bottom=bottom)
 
     def m(r1,c1,r2,c2):
         ws.merge_cells(start_row=r1,start_column=c1,end_row=r2,end_column=c2)
@@ -922,7 +944,7 @@ def _build_sheet1(ws, project, all_records=None):
     ws.cell(bot+4,13).number_format = "#,##0"
 
     m(bot+3,14,bot+4,14); s(bot+3,14,"",size=9)
-    ws.print_area = f"A1:N{bot+4}"
+    # （print_areaは明細一覧追加後に設定）
 
     # ── 全費目明細一覧セクション（請負金額内訳の下に追記） ──
     if all_records:
@@ -934,7 +956,7 @@ def _build_sheet1(ws, project, all_records=None):
         ws.merge_cells(start_row=detail_start, start_column=1, end_row=detail_start, end_column=14)
         tc = ws.cell(row=detail_start, column=1, value="■ 原価明細一覧")
         tc.font = Font(name="游ゴシック", bold=True, size=11, color="FFFFFF")
-        tc.fill = PatternFill("solid", fgColor="333333")
+        tc.fill = PatternFill("solid", fgColor="444444")
         tc.alignment = Aln2(horizontal="left", vertical="center")
         sd2 = Side(style="thin")
         tc.border = Border(left=sd2,right=sd2,top=sd2,bottom=sd2)
@@ -947,7 +969,7 @@ def _build_sheet1(ws, project, all_records=None):
         for ci, (lbl, wid) in enumerate(zip(hdr_labels, hdr_widths), 1):
             c = ws.cell(row=detail_hdr, column=ci, value=lbl)
             c.font = Font(name="游ゴシック", bold=True, size=9, color="FFFFFF")
-            c.fill = PatternFill("solid", fgColor="555555")
+            c.fill = PatternFill("solid", fgColor="666666")
             c.alignment = Aln2(horizontal="center", vertical="center")
             c.border = Border(left=sd2,right=sd2,top=sd2,bottom=sd2)
             ws.column_dimensions[get_column_letter(ci)].width = wid
@@ -975,12 +997,14 @@ def _build_sheet1(ws, project, all_records=None):
                         c.border = Border(left=sd2,right=sd2,top=sd2,bottom=sd2)
                         if ci == 7 and val:
                             c.number_format = "#,##0"
-                        # 費目列の色分け（グレー）
                         if ci == 1:
                             c.fill = PatternFill("solid", fgColor="F0F0F0")
+                            c.font = Font(name="游ゴシック", size=9, bold=True)
                     drow += 1
 
-        ws.print_area = f"A1:I{drow-1}"
+        ws.print_area = f"A1:N{drow-1}"
+    else:
+        ws.print_area = f"A1:N{bot+4}"
 
 
 def _build_sheet2(ws, project):
@@ -1003,7 +1027,7 @@ def _build_sheet2(ws, project):
     ws.merge_cells("A1:C1")
     ws["A1"] = f"集　計　表　　{project['name']}"
     ws["A1"].font = Font(name="游ゴシック", bold=True, size=13, color="FFFFFF")
-    ws["A1"].fill = PatternFill("solid", fgColor="333333")
+    ws["A1"].fill = PatternFill("solid", fgColor="444444")
     ws["A1"].alignment = Aln(horizontal="center", vertical="center")
     ws["A1"].border = bdr
 
@@ -1030,7 +1054,7 @@ def _build_sheet2(ws, project):
         c1.alignment = Aln(horizontal="center",vertical="center")
         c1.border = bdr
         # 費目シートが存在する場合のみSUMIF
-        formula = f"=IFERROR(SUMPRODUCT(('{cat}'!B4:B2000=\"{cat}\")*'{cat}'!G4:G2000),0)"
+        formula = f"=IFERROR(SUMPRODUCT(('{cat}'!B4:B500=\"{cat}\")*'{cat}'!G4:G2000),0)"
         c2 = ws.cell(row=row,column=2,value=formula)
         c2.font = Font(name="游ゴシック",size=10)
         c2.number_format = "#,##0"
@@ -1042,16 +1066,18 @@ def _build_sheet2(ws, project):
 
     # 合計
     ws.row_dimensions[row].height = 24
+    sd_thick = Side(style="medium", color="000000")
+    bdr_thick = Border(left=sd_thick,right=sd_thick,top=sd_thick,bottom=sd_thick)
     ct = ws.cell(row=row,column=1,value="合　計")
     ct.font = Font(name="游ゴシック",bold=True,size=11,color="FFFFFF")
     ct.fill = PatternFill("solid",fgColor="222222")
     ct.alignment = Aln(horizontal="center",vertical="center")
-    ct.border = bdr
+    ct.border = bdr_thick
     cv = ws.cell(row=row,column=2,value=f"=SUM(B4:B{row-1})")
     cv.font = Font(name="游ゴシック",bold=True,size=11)
     cv.number_format = "#,##0"
     cv.alignment = Aln(horizontal="right",vertical="center")
-    cv.border = bdr
+    cv.border = bdr_thick
     c3 = ws.cell(row=row,column=3,value="")
     c3.border = bdr
 
@@ -1097,7 +1123,7 @@ def _setup_cat_sheet(ws, project, cat):
     ws.merge_cells("A1:I1")
     ws["A1"] = f"{project['name']}　{cat}台帳"
     ws["A1"].font      = Font(name="游ゴシック", bold=True, size=13, color="FFFFFF")
-    ws["A1"].fill      = PatternFill("solid", fgColor="333333")
+    ws["A1"].fill      = PatternFill("solid", fgColor="444444")
     ws["A1"].alignment = Aln(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 28
     ws["A2"] = f"工事番号：{project.get('num','')}　担当：{project.get('person','')}　請負金額：{project.get('contract_amount','')}円　場所：{project.get('location','')}"
@@ -1108,7 +1134,7 @@ def _setup_cat_sheet(ws, project, cat):
     for col, h in enumerate(headers, 1):
         c = ws.cell(row=3, column=col, value=h)
         c.font      = Font(name="游ゴシック", bold=True, size=10, color="FFFFFF")
-        c.fill      = PatternFill("solid", fgColor="555555")
+        c.fill      = PatternFill("solid", fgColor="666666")
         c.alignment = Aln(horizontal="center", vertical="center")
         c.border    = _border()
     ws.row_dimensions[3].height = 22
